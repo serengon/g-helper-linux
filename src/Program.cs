@@ -11,19 +11,22 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        // Early-start systemd units (COSMIC autostart) may lack session vars;
-        // import them from the systemd user manager before anything reads them.
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
-            Cosmic.ImportSessionEnvironment();
-
-        SetGpuPreferenceEnv();
-
+        // Phase 1 is a review-only, technically non-deployable artifact.
+        // Dispatch the one safe metadata query or reject everything else
+        // before session import, configuration, native extraction, or UI.
         var rc = ResourceExtractorCli.TryDispatch(args);
         if (rc.HasValue)
         {
             Environment.Exit(rc.Value);
             return;
         }
+
+        // Early-start systemd units (COSMIC autostart) may lack session vars;
+        // import them from the systemd user manager before anything reads them.
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
+            Cosmic.ImportSessionEnvironment();
+
+        SetGpuPreferenceEnv();
 
         // "ghelper --osk" toggles the on-screen keyboard of a running
         // instance (hotkey/controller-chord friendly). When no instance is

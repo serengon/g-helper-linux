@@ -1491,36 +1491,9 @@ public static class Diagnostics
     {
         sb.AppendLine("--- Install State ---");
 
-        var udevExists = File.Exists("/etc/udev/rules.d/90-ghelper.rules");
-        sb.AppendLine($"  udev rules: {(udevExists ? "installed" : "NOT FOUND")}");
-
-        if (udevExists)
-        {
-            var udevVersion = "unknown";
-            try
-            {
-                // Read first 5 lines to find version comment
-                foreach (var line in File.ReadLines("/etc/udev/rules.d/90-ghelper.rules").Take(5))
-                {
-                    if (line.StartsWith("# Version:"))
-                    {
-                        var ver = line.Substring("# Version:".Length).Trim();
-                        udevVersion = string.IsNullOrEmpty(ver) || ver == "VERSION_PLACEHOLDER" ? "dev" : ver;
-                        break;
-                    }
-                }
-            }
-            catch { }
-            sb.AppendLine($"  udev rules version: {udevVersion}");
-
-            // Compare with app version if both are real versions (not "dev"/"unknown")
-            if (udevVersion != "dev" && udevVersion != "unknown")
-            {
-                var appVer = AppConfig.AppVersion;
-                if (appVer != udevVersion)
-                    sb.AppendLine($"  \u26a0 udev rules version mismatch (app: {appVer}, rules: {udevVersion})");
-            }
-        }
+        bool legacyUdevPresent = File.Exists("/etc/udev/rules.d/90-ghelper.rules");
+        sb.AppendLine($"  legacy upstream udev rules: {(legacyUdevPresent ? "present but UNTRUSTED" : "absent")}");
+        sb.AppendLine("  package-attested udev policy: UNAVAILABLE");
 
         var tmpfilesExists = File.Exists("/etc/tmpfiles.d/90-ghelper.conf");
         sb.AppendLine($"  tmpfiles.d: {(tmpfilesExists ? "installed" : "NOT FOUND")}");
@@ -2185,8 +2158,7 @@ public static class Diagnostics
         }
 
         // Autostart .desktop
-        var home = Environment.GetEnvironmentVariable("HOME") ?? "/home";
-        var autostart = Path.Combine(home, ".config/autostart/ghelper.desktop");
+        var autostart = AbsoluteUserPaths.ConfigPath("autostart", "ghelper.desktop");
         if (File.Exists(autostart))
         {
             string? exec = null;

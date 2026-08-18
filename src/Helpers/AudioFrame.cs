@@ -3,7 +3,7 @@ namespace GHelper.Linux.Helpers;
 /// <summary>
 /// One audio analysis snapshot from the ghelper-audio helper.
 ///
-/// Wire format: little-endian binary, 2600 bytes total. Layout MUST stay in
+/// Wire format: little-endian binary, 2596 bytes total. Layout MUST stay in
 /// sync with audio-helper/protocol.h (struct gha_frame).
 ///
 /// Protocol v2 (WIP, not shipped):

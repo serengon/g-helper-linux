@@ -2,6 +2,10 @@
 
 *Click on the screenshot to view full size.*
 
+> X13 hardened branch: build provenance, locked dependencies, and the pinned
+> container workflow are documented in
+> [docs/reproducible-build.md](docs/reproducible-build.md).
+
 ```
  ██████╗       ██╗  ██╗███████╗██╗     ██████╗ ███████╗██████╗ 
 ██╔════╝       ██║  ██║██╔════╝██║     ██╔══██╗██╔════╝██╔══██╗
@@ -27,10 +31,6 @@
 
 <div align="center">
 
-[![GitHub Release](https://img.shields.io/github/v/release/utajum/g-helper-linux?style=for-the-badge&color=4a9eff)](https://github.com/utajum/g-helper-linux/releases/latest)
-[![Total Binary Downloads](https://img.shields.io/github/downloads/utajum/g-helper-linux/ghelper?style=for-the-badge&color=28c840&label=total%20binary%20downloads)](https://github.com/utajum/g-helper-linux/releases)
-[![Total AppImage Downloads](https://img.shields.io/github/downloads/utajum/g-helper-linux/GHelper-x86_64.AppImage?style=for-the-badge&color=28c840&label=total%20appimage%20downloads)](https://github.com/utajum/g-helper-linux/releases)
-[![License](https://img.shields.io/github/license/utajum/g-helper-linux?style=for-the-badge&color=a0c8ff)](https://github.com/utajum/g-helper-linux/blob/master/LICENSE)
 [![Changelog](https://img.shields.io/badge/changelog-what's_new-ff8c42?style=for-the-badge)](CHANGELOG.md)
 
 </div>
@@ -211,116 +211,86 @@ lsmod | grep asus
 
 ---
 
-## `░▒▓█ ╔══[ INSTALLATION ]══╗ █▓▒░`
+## X13 hardened build status
 
-### `╠══[ ONE-LINER INSTALL ]══╣`
+> **Do not install or launch this branch on a laptop yet.** Phase 1 only
+> establishes a reproducible source/build baseline. Its binary is technically
+> non-deployable: a normal launch and every runtime/helper command exit with
+> code 64 before Avalonia, configuration, autostart, or native payload code can
+> initialize. The only accepted invocation is the exact, side-effect-free
+> `ghelper --print-build-metadata` query. Upstream udev and all other `install/`
+> files are non-executable quarantined inputs and must not be copied to a host.
 
-```bash
-curl -sL https://raw.githubusercontent.com/utajum/g-helper-linux/master/install/install.sh | sudo bash
-```
+The application identifies itself as `1.0.90-x13.1`. Runtime self-update,
+self-install, self-repair, and self-removal are disabled. The final artifact
+is planned to use a signed RPM only after the daemon, polkit, udev, and
+hardware-transition phases pass review; no hardened installer exists yet.
+Generic helper extraction and embedded installer payloads are also disabled.
+External `gpu-helper`, `gpu-block-helper.sh`, and `ryzenadj` executables are not
+discovered or executed until a signed RPM package-identity design is reviewed.
+Remote changelog images are rendered as links/placeholders rather than fetched.
 
-### `╠══[ QUICK UNINSTALL ]══╣`
+### Local build
 
-```bash
-curl -sL https://raw.githubusercontent.com/utajum/g-helper-linux/master/install/install.sh | sudo bash -s -- --uninstall
-```
-
-Removes system files + udev rules + desktop entry. User config in `~/.config/ghelper` is preserved.
-
-### `╠══[ MANUAL DOWNLOAD ]══╣`
-
-```bash
-curl -sL https://github.com/utajum/g-helper-linux/releases/latest/download/ghelper -o ghelper
-chmod +x ghelper
-./ghelper
-```
-
-### `╠══[ APPIMAGE ]══╣`
-
-```bash
-curl -sL https://github.com/utajum/g-helper-linux/releases/latest/download/GHelper-x86_64.AppImage -o GHelper-x86_64.AppImage
-chmod +x GHelper-x86_64.AppImage
-./GHelper-x86_64.AppImage
-```
-
-### `╠══[ BUILD FROM SOURCE ]══╣`
-
-```bash
-# Ubuntu/Debian
-sudo apt install dotnet-sdk-10.0 clang zlib1g-dev upx-ucl libpipewire-0.3-dev pkg-config
-
-# Fedora
-sudo dnf install dotnet-sdk-10.0 clang zlib-devel upx pipewire-devel pkg-config
-
-# Arch
-sudo pacman -S dotnet-sdk clang upx libpipewire pkg-config
-```
-
-```bash
-# Check for outdated NuGet packages
-cd src && dotnet list package --outdated
-```
+The supported Phase 1 build path uses the pinned container. It does not
+require a host .NET installation:
 
 ```bash
 ./build.sh
-sudo ./install/install-local.sh
+GHELPER_OFFLINE=1 ./build.sh
 ```
 
-<details>
-<summary><code>╠══[ MANUAL BUILD COMMANDS ]══╣</code></summary>
+Those commands require a clean committed tree. For an explicitly non-release
+review of local changes, use `GHELPER_DIRTY_REVIEW=1`; the binary records the
+SHA-256 of the complete tracked diff and untracked source set. This is unsigned
+local provenance, not authentication or proof of who built it.
+
+Each build first copies the exact tracked diff and untracked source set into a
+private Git snapshot. Provenance is computed inside that snapshot, compilation
+uses only that snapshot, and a post-build invariant rejects any staged change.
+Edits to the shared checkout after staging cannot change compiled inputs.
+The canonical container image cannot be overridden. The cache key covers all
+three lock files plus the relevant projects, props, and `global.json`; only
+that exact package closure is copied to the private cache. Links and special
+filesystem nodes are rejected. The image ID and complete cache manifest are
+embedded in the artifact and their environment digest is part of its
+informational version. A plain `dotnet publish -c Release` is unmistakably
+refused as `UNATTESTED`, but MSBuild properties are not a security boundary.
+
+The wrapper also emits `.ghelper-build-manifest-v1`, an external unsigned
+manifest bound to the artifact SHA-256 and exact source, image, lock closure,
+and environment. `--print-build-metadata` labels its result
+`LOCAL-REPRODUCIBLE-UNSIGNED`. Canonical verification is therefore:
 
 ```bash
-# Development (JIT, fast iteration)
-cd src && dotnet restore && dotnet run
-
-# GHELPER_DEV=1 shows a "Dev Windows" button in the main window to open any app window without the matching hardware
-GHELPER_DEV=1 dotnet run
-
-# Production (Native AOT)
-cd src && dotnet publish -c Release
-# → src/bin/Release/net10.0/linux-x64/publish/ghelper
+GHELPER_DIRTY_REVIEW=1 GHELPER_OFFLINE=1 \
+  ./scripts/verify-artifact.sh /absolute/artifact/directory
 ```
 
-</details>
+That command independently rebuilds and requires byte-identical output. An
+unsigned manifest can be fabricated; it becomes trusted only by reproduction.
+The verifier never launches a supplied candidate. It first rebuilds from the
+reviewed inputs, requires exact executable bytes and canonical manifest fields,
+then queries metadata only from the independently rebuilt binary.
+Cryptographic signing is reserved for the future RPM phase.
 
----
-
-## `░▒▓█ ╔══[ INSTALL TARGETS ]══╗ █▓▒░`
-
-```
-╔══[ DEPLOYED FILES ]════════════════════════════════════════════╗
-║                                                                 ║
-║  0xF0  Binary     /opt/ghelper/ghelper                         ║
-║  0xF1  Symlink    /usr/local/bin/ghelper                       ║
-║  0xF2  udev       /etc/udev/rules.d/90-ghelper.rules          ║
-║  0xF3  Desktop    /usr/share/applications/ghelper.desktop      ║
-║  0xF4  Autostart  ~/.config/autostart/ghelper.desktop          ║
-║                                                                 ║
-╚═════════════════════════════════════════════════════════════════╝
-```
-
-`install.sh` downloads the release binary. `install-local.sh` uses the local build from `dist/`.
+Inspect the exact artifact provenance without launching the application:
 
 ```bash
-# reload udev after install (or reboot)
-sudo udevadm control --reload-rules && sudo udevadm trigger
+./dist/ghelper --print-build-metadata
 ```
 
-<details>
-<summary><code>╠══[ MANUAL SETUP ]══╣</code></summary>
+The first command prepares the digest-pinned SDK image and external locked
+NuGet cache. The second command is fail-closed and runs with container
+networking disabled. Use `--output /absolute/path` to preserve an existing
+`dist/`. See [docs/reproducible-build.md](docs/reproducible-build.md).
 
-```bash
-# udev rules
-sudo cp install/90-ghelper.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-
-# Desktop entry + autostart
-sudo cp install/ghelper.desktop /usr/share/applications/
-mkdir -p ~/.config/autostart
-cp install/ghelper.desktop ~/.config/autostart/
-```
-
-</details>
+Do not run any file under `install/`, copy `install/90-ghelper.rules`, or
+execute any binary from an upstream release. Every quarantined install file has
+its executable bit removed and none is embedded or callable by the Phase 1
+application/build path.
+The upstream NixOS module/package path and floating vendor updater are removed.
+There is intentionally no AppImage or automated release workflow.
 
 ---
 
@@ -340,9 +310,9 @@ Same JSON key format as Windows G-Helper — fan curves and mode settings are co
 g-helper-linux/
   build.sh                                # Build script (Native AOT)
   install/
-    install.sh                            # Download + install (end users)
-    install-local.sh                      # Install from local build (devs)
-    90-ghelper.rules                      # udev rules
+    install.sh                            # disabled fail-closed stub
+    install-local.sh                      # disabled fail-closed stub
+    90-ghelper.rules                      # unaudited upstream udev input
     ghelper.desktop                       # Desktop entry
   src/
     Program.cs                            # Entry point
@@ -399,9 +369,9 @@ g-helper-linux/
 
 - [G-Helper](https://github.com/seerge/g-helper) by seerge
 - [Avalonia UI](https://avaloniaui.net/)
-- [asus-wmi kernel driver](https://github.com/torvalds/linux/tree/master/drivers/platform/x86)
+- [asus-wmi kernel driver](https://github.com/torvalds/linux/tree/v7.1/drivers/platform/x86)
 - [ryzen_smu](https://github.com/amkillam/ryzen_smu) by Leonardo Gates / amkillam
-- [RyzenAdj](https://github.com/FlyGoat/RyzenAdj) by FlyGoat (bundled CLI binary for AMD SMU power tuning)
+- [RyzenAdj](https://github.com/FlyGoat/RyzenAdj) by FlyGoat (upstream historical input; disabled and not embedded in this fork)
 
 ---
 

@@ -276,7 +276,7 @@ public class LinuxNvidiaGpuControl : IGpuControl
             if (!NvidiaProcessScanner.EnsureHelper())
             {
                 Helpers.Logger.WriteLine(
-                    "NVIDIA: gpu-helper not available - clock offsets skipped (re-run install script)");
+                    "NVIDIA: gpu-helper unavailable - clock offsets skipped; hardened installer is not available yet");
             }
             else
             {

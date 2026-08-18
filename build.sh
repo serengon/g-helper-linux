@@ -1,13 +1,104 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
-# G-Helper Linux — Build Script
-# Compiles the project as a native AOT binary and copies output to dist/
+# G-Helper Linux public build entrypoint. Outside the wrapper-owned container
+# context this file can only delegate to the isolated snapshot builder.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_CONTEXT=/tmp/ghelper-build-context
+BUILD_TOKEN=/tmp/ghelper-build-token
+if [[ ! -e "$BUILD_CONTEXT" && ! -e "$BUILD_TOKEN" ]]; then
+    exec "$SCRIPT_DIR/scripts/build-container.sh" "$@"
+fi
+
+exact_readonly_mount() {
+    local path="$1" record target options
+    record="$(findmnt -n -M "$path" -o TARGET,OPTIONS 2>/dev/null)" || return 1
+    [[ "$record" != *$'\n'* ]] || return 1
+    read -r target options <<< "$record"
+    [[ "$target" == "$path" ]] || return 1
+    case ",${options}," in *,ro,*) ;; *) return 1 ;; esac
+    case ",${options}," in *,rw,*) return 1 ;; esac
+}
+
+if ! command -v findmnt >/dev/null 2>&1 \
+   || ! exact_readonly_mount "$BUILD_CONTEXT" \
+   || ! exact_readonly_mount "$BUILD_TOKEN" \
+   || [[ ! -f "$BUILD_CONTEXT" || -L "$BUILD_CONTEXT" \
+      || ! -f "$BUILD_TOKEN" || -L "$BUILD_TOKEN" ]] \
+   || [[ "$(stat -c %u -- "$BUILD_CONTEXT")" != "$(id -u)" \
+      || "$(stat -c %a -- "$BUILD_CONTEXT")" != "400" \
+      || "$(stat -c %u -- "$BUILD_TOKEN")" != "$(id -u)" \
+      || "$(stat -c %a -- "$BUILD_TOKEN")" != "400" ]]; then
+    echo "ERROR: internal compilation requires a wrapper-owned read-only context." >&2
+    exit 1
+fi
+
 SRC_DIR="$SCRIPT_DIR/src"
 DIST_DIR="$SCRIPT_DIR/dist"
 PUBLISH_DIR="$SRC_DIR/bin/Release/net10.0/linux-x64/publish"
+
+caller_provenance="${GHELPER_BUILD_PROVENANCE:-}"
+caller_version="${GHELPER_INFORMATIONAL_VERSION:-}"
+unset GHELPER_BUILD_MODE GHELPER_DIFF_HASH GHELPER_BUILD_PROVENANCE \
+    GHELPER_INFORMATIONAL_VERSION GHELPER_BUILD_ENV_HASH
+
+context_value() {
+    local key="$1"
+    awk -F= -v wanted="$key" '$1 == wanted { sub(/^[^=]*=/, ""); print; found++ }
+        END { if (found != 1) exit 1 }' "$BUILD_CONTEXT"
+}
+
+CONTEXT_FORMAT="$(context_value format)"
+CONTEXT_WRAPPER_NONCE="$(context_value wrapper_nonce)"
+[[ "$CONTEXT_FORMAT" == "ghelper-phase1-build-context-v1" ]] || {
+    echo "ERROR: invalid wrapper build context format." >&2
+    exit 1
+}
+[[ "$CONTEXT_WRAPPER_NONCE" =~ ^[0-9a-f]{64}$ \
+   && "$(cat -- "$BUILD_TOKEN")" == \
+      "ghelper-phase1-wrapper-v1:$CONTEXT_WRAPPER_NONCE" ]] || {
+    echo "ERROR: wrapper handshake token does not match the build context." >&2
+    exit 1
+}
+CONTEXT_SOURCE_PROVENANCE="$(context_value source_provenance)"
+CONTEXT_BUILD_MODE="$(context_value build_mode)"
+CONTEXT_VERSION="$(context_value informational_version)"
+CONTEXT_IMAGE_ID="$(context_value image_id)"
+CONTEXT_IMAGE_INPUT_HASH="$(context_value image_input_sha256)"
+CONTEXT_CACHE_INPUT_HASH="$(context_value cache_input_sha256)"
+CONTEXT_NUGET_MANIFEST_HASH="$(context_value nuget_manifest_sha256)"
+CONTEXT_ENV_HASH="$(context_value environment_sha256)"
+[[ "$CONTEXT_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ \
+   && "$CONTEXT_IMAGE_INPUT_HASH" =~ ^[0-9a-f]{64}$ \
+   && "$CONTEXT_CACHE_INPUT_HASH" =~ ^[0-9a-f]{64}$ \
+   && "$CONTEXT_NUGET_MANIFEST_HASH" =~ ^[0-9a-f]{64}$ \
+   && "$CONTEXT_ENV_HASH" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "ERROR: malformed wrapper reproducibility context." >&2
+    exit 1
+}
+[[ "$CONTEXT_BUILD_MODE" == "clean" \
+   || "$CONTEXT_BUILD_MODE" == "dirty-review" ]] || {
+    echo "ERROR: malformed wrapper build mode." >&2
+    exit 1
+}
+
+# shellcheck source=scripts/provenance.sh
+source "$SCRIPT_DIR/scripts/provenance.sh"
+if [[ "$CONTEXT_BUILD_MODE" == "dirty-review" ]]; then
+    GHELPER_DIRTY_REVIEW=1 ghelper_set_provenance "$SCRIPT_DIR" "$CONTEXT_ENV_HASH"
+else
+    GHELPER_DIRTY_REVIEW=0 ghelper_set_provenance "$SCRIPT_DIR" "$CONTEXT_ENV_HASH"
+fi
+[[ "$GHELPER_BUILD_PROVENANCE" == "$CONTEXT_SOURCE_PROVENANCE" \
+   && "$GHELPER_INFORMATIONAL_VERSION" == "$CONTEXT_VERSION" ]] || {
+    echo "ERROR: wrapper context does not describe this source snapshot." >&2
+    exit 1
+}
+if [[ -n "$caller_provenance$caller_version" ]]; then
+    echo "Ignoring caller-supplied provenance metadata; recomputed from Git state." >&2
+fi
+printf 'Build provenance: %s (%s)\n' "$GHELPER_BUILD_PROVENANCE" "$GHELPER_BUILD_MODE"
 
 USE_AOT=1
 while [[ $# -gt 0 ]]; do
@@ -15,18 +106,23 @@ while [[ $# -gt 0 ]]; do
         --no-aot|--fast|-f)
             USE_AOT=0
             ;;
+        --print-provenance)
+            printf '%s\n' "$GHELPER_INFORMATIONAL_VERSION"
+            exit 0
+            ;;
         -h|--help)
             cat <<EOF
 Usage: $0 [--no-aot|--fast|-f]
 
 Modes:
-  (default)            Full Native AOT build. Single 16MB compressed binary
+  (default)            Full Native AOT build. Single native binary
                        in dist/ghelper. Takes ~2 min.
-  --no-aot, --fast,-f  Fast iteration build. Skips AOT/trimming/UPX. dist/
+  --no-aot, --fast,-f  Fast iteration build. Skips AOT/trimming. dist/
                        becomes a folder (~80MB) containing ghelper + DLLs.
                        Incremental rebuilds (~5-10s after first run).
 
 Other flags:
+  --print-provenance   Recompute and print exact Git/diff provenance.
   -h, --help           Show this message.
 EOF
             exit 0
@@ -44,22 +140,38 @@ echo "=== G-Helper Linux Build ==="
 if (( USE_AOT )); then
     echo "    Mode: Native AOT"
 else
-    echo "    Mode: Fast (no AOT, no trim, no UPX)"
+    echo "    Mode: Fast (no AOT, no trim)"
 fi
 echo ""
 
 # Check .NET SDK
 if ! command -v dotnet &>/dev/null; then
     echo "ERROR: .NET SDK not found."
-    echo "Install it with:"
-    echo "  Ubuntu/Debian:  sudo apt install dotnet-sdk-10.0"
-    echo "  Fedora:         sudo dnf install dotnet-sdk-10.0"
-    echo "  Arch:           sudo pacman -S dotnet-sdk"
+    echo "This tree requires exactly .NET SDK 10.0.400."
+    echo "Use ./scripts/build-container.sh instead of installing a floating host SDK."
     exit 1
 fi
 
 SDK_VERSION=$(dotnet --version 2>/dev/null || echo "unknown")
 echo "Using .NET SDK: $SDK_VERSION"
+if [[ "$SDK_VERSION" != "10.0.400" ]]; then
+    echo "ERROR: This source tree requires exactly .NET SDK 10.0.400." >&2
+    echo "Use ./scripts/build-container.sh when that SDK is not installed." >&2
+    exit 1
+fi
+
+NUGET_DIR="${NUGET_PACKAGES:-}"
+[[ -n "$NUGET_DIR" && "$NUGET_DIR" == /* ]] || {
+    echo "ERROR: internal build requires an absolute private NuGet cache." >&2
+    exit 1
+}
+# shellcheck source=scripts/cache-manifest.sh
+source "$SCRIPT_DIR/scripts/cache-manifest.sh"
+actual_nuget_manifest_hash="$(ghelper_nuget_manifest_sha256 "$NUGET_DIR")"
+[[ "$actual_nuget_manifest_hash" == "$CONTEXT_NUGET_MANIFEST_HASH" ]] || {
+    echo "ERROR: private NuGet cache does not match wrapper reproducibility context." >&2
+    exit 1
+}
 
 # Check for clang (required for AOT)
 if ! command -v clang &>/dev/null; then
@@ -79,6 +191,39 @@ fi
 # at runtime by NativeLibExtractor. Vendored rnnoise (BSD-3) is GPL-3 compatible.
 AUDIO_HELPER_DIR="$SCRIPT_DIR/audio-helper"
 AUDIO_HELPER_BIN=""
+WLR_RANDR_DIR="$SCRIPT_DIR/vendor/wlr-randr"
+
+safe_delete_generated_dir() {
+    local candidate="$1"
+    case "$candidate" in
+        "$SRC_DIR/bin"|"$SRC_DIR/obj"|"$SRC_DIR/bin/Release"|"$SRC_DIR/obj/Release"|\
+        "$SCRIPT_DIR/build/embedded"|"$DIST_DIR") ;;
+        *)
+            echo "ERROR: refusing unexpected generated-path cleanup: $candidate" >&2
+            return 1
+            ;;
+    esac
+    [[ ! -L "$candidate" ]] || {
+        echo "ERROR: refusing symlinked generated-path cleanup: $candidate" >&2
+        return 1
+    }
+    if [[ -e "$candidate" ]]; then
+        [[ -d "$candidate" ]] || {
+            echo "ERROR: generated cleanup target is not a directory: $candidate" >&2
+            return 1
+        }
+        find -P "$candidate" -depth -delete
+    fi
+}
+
+cleanup_generated_build_files() {
+    rm -f "$WLR_RANDR_DIR/wlr-randr" \
+          "$WLR_RANDR_DIR/wlr-output-management-unstable-v1-client-protocol.h" \
+          "$WLR_RANDR_DIR/wlr-output-management-unstable-v1-protocol.c"
+    (cd "$AUDIO_HELPER_DIR" && make clean >/dev/null 2>&1) || true
+    safe_delete_generated_dir "$SCRIPT_DIR/build/embedded" || true
+}
+trap cleanup_generated_build_files EXIT
 
 if ! command -v pkg-config &>/dev/null || \
    ! pkg-config --exists libpipewire-0.3 2>/dev/null || \
@@ -109,7 +254,6 @@ else
 fi
 
 # Build wlr-randr (Wayland display tool — vendored v0.5.0, MIT license)
-WLR_RANDR_DIR="$SCRIPT_DIR/vendor/wlr-randr"
 WLR_RANDR_BIN=""
 
 if command -v wayland-scanner &>/dev/null && command -v cc &>/dev/null; then
@@ -140,70 +284,71 @@ else
     echo "  Install with: sudo apt install libwayland-dev"
 fi
 
-# Build gpu-helper (root-only privileged GPU operations multiplexer, vendored)
-GPU_HELPER_DIR="$SCRIPT_DIR/vendor/gpu-helper"
-GPU_HELPER_BIN=""
-
-if command -v cc &>/dev/null; then
-    echo ""
-    echo "Building gpu-helper..."
-    (
-        cd "$GPU_HELPER_DIR"
-        HELPER_SRCS="process_ops.c nvidia_ops.c pci_ops.c \
-                     wmi_ops.c msr_ops.c lenovo_ops.c"
-        cc -O2 -Wall -Wno-unused-result -DNDEBUG \
-           -o gpu-helper gpu-helper.c $HELPER_SRCS \
-           -ldl
-        strip gpu-helper
-    )
-    if [[ -f "$GPU_HELPER_DIR/gpu-helper" ]]; then
-        GPU_HELPER_BIN="$GPU_HELPER_DIR/gpu-helper"
-        echo "  gpu-helper built: $(du -sh "$GPU_HELPER_BIN" | cut -f1)"
-    else
-        echo "ERROR: gpu-helper build failed (privileged GPU operations unavailable)"
-        echo "  Check: 'cc' is installed"
-        exit 1
-    fi
-else
-    echo ""
-    echo "NOTE: cc not found, skipping gpu-helper build."
-fi
-
-# Clean previous build artifacts. Skipped in fast mode so MSBuild's
-# up-to-date check can shortcut unchanged work on repeat runs.
+# Clean all main-project intermediates. AOT review/release builds must never
+# inherit generated state from a previous checkout or configuration.
 echo ""
 if (( USE_AOT )); then
     echo "[1/4] Cleaning previous build..."
-    rm -rf "$SRC_DIR/bin/Release" 2>/dev/null || true
+    safe_delete_generated_dir "$SRC_DIR/bin"
+    safe_delete_generated_dir "$SRC_DIR/obj"
 else
     echo "[1/4] Cleaning (fast mode) to force MSBuild condition re-evaluation..."
-    rm -rf "$SRC_DIR/bin/Release" "$SRC_DIR/obj/Release" 2>/dev/null || true
+    safe_delete_generated_dir "$SRC_DIR/bin/Release"
+    safe_delete_generated_dir "$SRC_DIR/obj/Release"
 fi
 
 # Restore packages
 echo "[2/4] Restoring packages..."
-if ! dotnet restore "$SRC_DIR" --runtime linux-x64 -q; then
+if ! dotnet restore "$SRC_DIR" --runtime linux-x64 --locked-mode -q; then
     echo "ERROR: Package restore failed."
     exit 1
 fi
 
 # Prepare native .so for embedding
 EMBED_DIR="$SCRIPT_DIR/build/embedded"
-rm -rf "$EMBED_DIR"
+safe_delete_generated_dir "$EMBED_DIR"
 mkdir -p "$EMBED_DIR"
+printf '%s\n' "$GHELPER_INFORMATIONAL_VERSION" > "$EMBED_DIR/provenance.txt"
+awk '!/^wrapper_nonce=/' "$BUILD_CONTEXT" > "$EMBED_DIR/build-environment.txt"
 
-NUGET_DIR="${NUGET_PACKAGES:-$HOME/.nuget/packages}"
-for lib_spec in \
-    "libSkiaSharp.so:skiasharp.nativeassets.linux:runtimes/linux-x64/native/libSkiaSharp.so" \
-    "libHarfBuzzSharp.so:harfbuzzsharp.nativeassets.linux:runtimes/linux-x64/native/libHarfBuzzSharp.so"; do
-    IFS=':' read -r lib_name pkg_name pkg_path <<< "$lib_spec"
-    # Find the latest version directory for this package
-    pkg_dir=$(find "$NUGET_DIR/$pkg_name" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -V | tail -1)
-    if [[ -n "$pkg_dir" && -f "$pkg_dir/$pkg_path" ]]; then
-        cp "$pkg_dir/$pkg_path" "$EMBED_DIR/$lib_name"
-        strip --strip-unneeded "$EMBED_DIR/$lib_name" 2>/dev/null || true
-        echo "  Embedded $lib_name: $(du -sh "$EMBED_DIR/$lib_name" | cut -f1) (stripped)"
+LOCK_FILE="$SRC_DIR/packages.lock.json"
+
+locked_package_version() {
+    local package="$1"
+    local versions=()
+    mapfile -t versions < <(
+        awk -v key="\"$package\"" '
+            index($0, key ": {") { in_package = 1; next }
+            in_package && /"resolved"[[:space:]]*:/ {
+                value = $0
+                sub(/^.*"resolved"[[:space:]]*:[[:space:]]*"/, "", value)
+                sub(/".*$/, "", value)
+                print value
+                in_package = 0
+            }
+        ' "$LOCK_FILE" | sort -u
+    )
+    if [[ "${#versions[@]}" -ne 1 || ! "${versions[0]}" =~ ^[0-9A-Za-z.+-]+$ ]]; then
+        echo "ERROR: expected one locked version for $package, found: ${versions[*]:-none}" >&2
+        return 1
     fi
+    printf '%s\n' "${versions[0]}"
+}
+
+SKIA_NATIVE_VERSION="$(locked_package_version "SkiaSharp.NativeAssets.Linux")"
+HARFBUZZ_NATIVE_VERSION="$(locked_package_version "HarfBuzzSharp.NativeAssets.Linux")"
+for lib_spec in \
+    "libSkiaSharp.so:skiasharp.nativeassets.linux:$SKIA_NATIVE_VERSION:runtimes/linux-x64/native/libSkiaSharp.so" \
+    "libHarfBuzzSharp.so:harfbuzzsharp.nativeassets.linux:$HARFBUZZ_NATIVE_VERSION:runtimes/linux-x64/native/libHarfBuzzSharp.so"; do
+    IFS=':' read -r lib_name pkg_name pkg_version pkg_path <<< "$lib_spec"
+    pkg_dir="$NUGET_DIR/$pkg_name/$pkg_version"
+    if [[ ! -f "$pkg_dir/$pkg_path" ]]; then
+        echo "ERROR: Locked native asset missing: $pkg_name/$pkg_version/$pkg_path" >&2
+        exit 1
+    fi
+    cp "$pkg_dir/$pkg_path" "$EMBED_DIR/$lib_name"
+    strip --strip-unneeded "$EMBED_DIR/$lib_name" 2>/dev/null || true
+    echo "  Embedded $lib_name: $(du -sh "$EMBED_DIR/$lib_name" | cut -f1) (stripped)"
 done
 
 # Embed ghelper-audio helper if it was built
@@ -215,16 +360,32 @@ fi
 # Publish
 if (( USE_AOT )); then
     echo "[3/4] Compiling native AOT binary (this may take a minute)..."
-    dotnet publish "$SRC_DIR" -c Release --no-restore 2>&1 \
-        | grep -v "^.*error : Deleting file" || true
+    dotnet publish "$SRC_DIR" -c Release --no-restore \
+        -p:GHelperCanonicalLocalBuild=true \
+        -p:InformationalVersion="$GHELPER_INFORMATIONAL_VERSION" \
+        -p:SourceRevisionId="$GHELPER_BUILD_PROVENANCE" \
+        -p:GHelperBuildMode="$GHELPER_BUILD_MODE" \
+        -p:GHelperBuildImageId="$CONTEXT_IMAGE_ID" \
+        -p:GHelperImageInputSha256="$CONTEXT_IMAGE_INPUT_HASH" \
+        -p:GHelperCacheInputSha256="$CONTEXT_CACHE_INPUT_HASH" \
+        -p:GHelperNuGetManifestSha256="$CONTEXT_NUGET_MANIFEST_HASH" \
+        -p:GHelperBuildEnvironmentSha256="$CONTEXT_ENV_HASH"
 else
     echo "[3/4] Compiling (fast mode, no AOT)..."
     dotnet publish "$SRC_DIR" -c Release --no-restore \
         -p:PublishAot=false \
         -p:PublishTrimmed=false \
         -p:StripSymbols=false \
-        --self-contained true -r linux-x64 2>&1 \
-        | grep -v "^.*error : Deleting file" || true
+        -p:GHelperCanonicalLocalBuild=true \
+        -p:InformationalVersion="$GHELPER_INFORMATIONAL_VERSION" \
+        -p:SourceRevisionId="$GHELPER_BUILD_PROVENANCE" \
+        -p:GHelperBuildMode="$GHELPER_BUILD_MODE" \
+        -p:GHelperBuildImageId="$CONTEXT_IMAGE_ID" \
+        -p:GHelperImageInputSha256="$CONTEXT_IMAGE_INPUT_HASH" \
+        -p:GHelperCacheInputSha256="$CONTEXT_CACHE_INPUT_HASH" \
+        -p:GHelperNuGetManifestSha256="$CONTEXT_NUGET_MANIFEST_HASH" \
+        -p:GHelperBuildEnvironmentSha256="$CONTEXT_ENV_HASH" \
+        --self-contained true -r linux-x64
 fi
 
 # Verify the binary was produced
@@ -237,7 +398,7 @@ fi
 
 # Copy to dist/
 echo "[4/4] Copying to dist/..."
-rm -rf "$DIST_DIR"
+safe_delete_generated_dir "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 if (( USE_AOT )); then
@@ -246,37 +407,6 @@ else
     cp -r "$PUBLISH_DIR/." "$DIST_DIR/"
 fi
 chmod +x "$DIST_DIR/ghelper"
-
-# UPX compression (AOT mode only — pointless on a folder of DLLs).
-if (( USE_AOT )); then
-    if command -v upx &>/dev/null; then
-        echo "[5/5] Compressing with UPX..."
-        upx --best --lzma "$DIST_DIR/ghelper" 2>&1 | tail -1 || true
-    else
-        echo ""
-        echo "NOTE: upx not found — binary will not be compressed."
-        echo "  Install with: sudo apt install upx-ucl"
-    fi
-else
-    echo "[5/5] Skipping UPX (fast mode)"
-fi
-
-# Clean wlr-randr build artifacts from vendor dir (binary is embedded in ghelper)
-if [[ -n "$WLR_RANDR_BIN" ]]; then
-    rm -f "$WLR_RANDR_DIR/wlr-randr" \
-          "$WLR_RANDR_DIR/wlr-output-management-unstable-v1-client-protocol.h" \
-          "$WLR_RANDR_DIR/wlr-output-management-unstable-v1-protocol.c"
-fi
-
-# Clean ghelper-audio build artifacts (binary is embedded)
-if [[ -n "$AUDIO_HELPER_BIN" ]]; then
-    (cd "$AUDIO_HELPER_DIR" && make clean >/dev/null 2>&1) || true
-fi
-
-# Clean gpu-helper build artifact from vendor dir (binary is embedded in ghelper)
-if [[ -n "$GPU_HELPER_BIN" ]]; then
-    rm -f "$GPU_HELPER_DIR/gpu-helper"
-fi
 
 # Summary
 BINARY_SIZE=$(du -sh "$DIST_DIR/ghelper" | cut -f1)

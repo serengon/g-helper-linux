@@ -540,15 +540,13 @@ public class LinuxAsusWmi : IHardwareControl
     }
 
     /// <summary>
-    /// Optional root prefix for every disk-state probe in this class. Set
-    /// to a sandbox path via <c>GHELPER_TEST_ROOT</c> so the test harness
-    /// can exercise PCI / module / eco-artifact detection without touching
-    /// the host. Empty in production so the real sysfs / /etc paths are
-    /// used. Matches the same env var consumed by <c>GPUModeControl</c>
-    /// so a single export covers both layers.
+    /// Optional root prefix for every disk-state probe in this class. The
+    /// backing hook exists only when the dedicated scenario-test assembly is
+    /// compiled with GHELPER_TESTS; production cannot redirect hardware
+    /// probes through caller-controlled environment state.
     /// </summary>
     internal static string TestPathPrefix
-        => Environment.GetEnvironmentVariable("GHELPER_TEST_ROOT") ?? "";
+        => Gpu.GPUModeControl.TestPathPrefix;
 
     /// <summary>
     /// Cheap PCI bus scan: returns true if at least one device has vendor

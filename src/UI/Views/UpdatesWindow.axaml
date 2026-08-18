@@ -41,7 +41,7 @@
             <Border Background="#262626" CornerRadius="6" Padding="10,6">
                 <Grid ColumnDefinitions="*,Auto">
                     <TextBlock x:Name="labelAppVersion" Grid.Column="0"
-                               Text="G-Helper Linux v1.0.0"
+                               Text="G-Helper Linux v1.0.90-x13.1"
                                Foreground="#F0F0F0" FontSize="12"
                                VerticalAlignment="Center" />
                     <Button x:Name="buttonChangelog" Grid.Column="1"
@@ -67,7 +67,7 @@
             </StackPanel>
 
             <!-- System integration files (self-installer) -->
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,8,0,0" IsVisible="False">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6"
                             Cursor="Hand" Background="Transparent"
                             VerticalAlignment="Center"
@@ -101,11 +101,13 @@
                 </StackPanel>
             </Border>
 
-            <!-- G-Helper Linux self-update -->
-            <TextBlock x:Name="labelGHelperSection" Text="G-Helper Linux" Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" Margin="0,8,0,4" />
+            <!-- Hardened fork package status. There is intentionally no updater. -->
+            <TextBlock x:Name="labelGHelperSection" Text="G-Helper X13 package" Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" Margin="0,8,0,4" />
             <Border Background="#262626" CornerRadius="6" Padding="10,6">
                 <StackPanel x:Name="panelSelfUpdate" Spacing="4">
-                    <TextBlock x:Name="labelSelfUpdateStatus" Text="Checking for updates..." Foreground="#999999" FontSize="12" />
+                    <TextBlock x:Name="labelSelfUpdateStatus"
+                               Text=""
+                               TextWrapping="Wrap" Foreground="#999999" FontSize="12" />
                 </StackPanel>
             </Border>
 

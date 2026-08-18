@@ -31,6 +31,7 @@
     <!-- We don't want to compile any Avalonia .axaml from the main proj. -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <DefineConstants>$(DefineConstants);GHELPER_TESTS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -66,8 +67,11 @@
     <Compile Include="../../src/Platform/Linux/Asus/LinuxAsusWmi.cs" />
     <Compile Include="../../src/Platform/Linux/Asus/AsusWmiDebugfs.cs" />
     <Compile Include="../../src/Helpers/AppConfig.cs" />
+    <Compile Include="../../src/Helpers/AbsoluteUserPaths.cs" />
     <Compile Include="../../src/Helpers/Logger.cs" />
     <Compile Include="../../src/Helpers/MemoryHelper.cs" />
+    <Compile Include="../../src/Helpers/AtomicPayloadInstaller.cs" />
+    <Compile Include="../../src/Cli/ResourceExtractorCli.cs" />
     <!-- Labels.Get() in LinuxNvidiaGpuControl; pulls all language tables -->
     <Compile Include="../../src/I18n/**/*.cs" />
   </ItemGroup>

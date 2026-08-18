@@ -685,70 +685,13 @@ public static class SysfsHelper
         return displays.Any(d => d.StartsWith("eDP", StringComparison.OrdinalIgnoreCase));
     }
 
-    public static readonly string SudoPath = ResolveSudoPath();
-
-    public static readonly string GpuHelperPath = ResolveGpuHelperPath();
-
-    /// <summary>Where gpu-helper should be installed on this machine.
-    /// Sealed-root SteamOS cannot write /opt; /etc is a writable overlay.</summary>
-    internal static string DefaultGpuHelperInstallPath =>
-        ImmutableOs.IsSteamOs && ImmutableOs.IsRootReadOnly()
-            ? "/etc/ghelper/gpu-helper"
-            : "/opt/ghelper/gpu-helper";
-
-    private static string ResolveGpuHelperPath()
-    {
-        // NixOS: module puts a Nix-native gpu-helper on PATH
-        var nixPath = NixOS.ResolveGpuHelper();
-        if (nixPath != null)
-            return nixPath;
-
-        // /etc/ghelper is the sealed-root SteamOS location (writable overlay).
-        foreach (var p in new[] { "/opt/ghelper/gpu-helper", "/etc/ghelper/gpu-helper", "/usr/local/lib/ghelper/gpu-helper" })
-            if (System.IO.File.Exists(p))
-                return p;
-
-        return DefaultGpuHelperInstallPath;
-    }
-
-    public static readonly string RyzenadjPath = ResolveRyzenadjPath();
-
-    /// <summary>Where the bundled ryzenadj CLI should be installed.
-    /// Sealed-root SteamOS cannot write /opt; /etc is a writable overlay.</summary>
-    internal static string DefaultRyzenadjInstallPath =>
-        ImmutableOs.IsSteamOs && ImmutableOs.IsRootReadOnly()
-            ? "/etc/ghelper/ryzenadj"
-            : "/opt/ghelper/ryzenadj";
-
-    private static string ResolveRyzenadjPath()
-    {
-        // NixOS: module puts the nixpkgs ryzenadj on PATH
-        var nixPath = NixOS.ResolveRyzenadj();
-        if (nixPath != null)
-            return nixPath;
-
-        foreach (var p in new[] { "/opt/ghelper/ryzenadj", "/etc/ghelper/ryzenadj" })
-            if (System.IO.File.Exists(p))
-                return p;
-
-        return DefaultRyzenadjInstallPath;
-    }
-
-    private static string ResolveSudoPath()
-    {
-        foreach (var p in new[]
-        {
-            "/usr/bin/sudo",
-            "/bin/sudo",
-            "/usr/local/bin/sudo",
-            "/run/wrappers/bin/sudo",
-        })
-        {
-            if (System.IO.File.Exists(p))
-                return p;
-        }
-        return "sudo";
-    }
+    // Privileged helpers have no package-managed identity/attestation in
+    // Phase 1. Empty paths are intentional: callers must fail closed without
+    // probing PATH or legacy install locations.
+    public const string SudoPath = "";
+    public const string GpuHelperPath = "";
+    public const string RyzenadjPath = "";
+    public const bool PrivilegedOperationsAvailable = false;
 
     /// <summary>Run a shell command and return stdout. Returns null on failure.</summary>
     public static string? RunCommand(string command, string args = "")
@@ -756,11 +699,11 @@ public static class SysfsHelper
         return RunCommandWithTimeout(command, args, 5000);
     }
 
-    /// <summary>Run a bash script via pkexec. The script is passed as a single arg to bash -c,
-    /// avoiding the whitespace splitting issue with ProcessStartInfo.Arguments</summary>
+    /// <summary>Privilege escalation is unavailable until package attestation exists.</summary>
     public static string? RunPkexecBash(string script)
     {
-        return RunCommandWithTimeout("pkexec", new[] { "bash", "-c", script }, 120000);
+        Helpers.Logger.WriteLine("Privileged operation refused: hardened package path is unavailable");
+        return null;
     }
 
     /// <summary>
@@ -773,43 +716,8 @@ public static class SysfsHelper
     /// </summary>
     public static string? RunSudoOrPkexec(string command, string[] args, int sudoTimeoutMs = 5000, int pkexecTimeoutMs = 60000, bool allowPkexec = true)
     {
-        var sudoArgs = new string[args.Length + 2];
-        sudoArgs[0] = "-n";
-        sudoArgs[1] = command;
-        Array.Copy(args, 0, sudoArgs, 2, args.Length);
-
-        var (exitCode, stdout, stderr) = RunProcessWithStderr(SudoPath, sudoArgs, sudoTimeoutMs);
-        if (exitCode == 0)
-            return stdout;
-
-        // Distinguish sudo auth/permission failure from command-side failure.
-        // sudo (classic and sudo-rs) prefixes its own error messages with "sudo:".
-        // If stderr starts with "sudo:" the issue is permission / auth - pkexec
-        // can help. Any other stderr came from the command itself; re-running via
-        // pkexec would produce the same failure and just add an unnecessary prompt.
-        bool sudoRefused = stderr.StartsWith("sudo:", StringComparison.Ordinal)
-                        || stderr.Contains("not allowed to execute", StringComparison.Ordinal)
-                        || stderr.Contains("may not run sudo", StringComparison.Ordinal);
-
-        if (!sudoRefused)
-        {
-            if (!string.IsNullOrEmpty(stderr))
-                Helpers.Logger.WriteLine($"RunCommand({SudoPath} -n {command}) failed (command error, not auth): {stderr.Trim()}");
-            return null;
-        }
-
-        if (!allowPkexec)
-        {
-            LogEscalationSkip(command, args);
-            return null;
-        }
-
-        Helpers.Logger.WriteLine($"sudo -n {command} not permitted - falling back to pkexec");
-
-        var pkArgs = new string[args.Length + 1];
-        pkArgs[0] = command;
-        Array.Copy(args, 0, pkArgs, 1, args.Length);
-        return RunCommandWithTimeout("pkexec", pkArgs, pkexecTimeoutMs);
+        LogEscalationSkip(command, args);
+        return null;
     }
 
     // Polling / auto-apply paths must never pop an auth dialog: with broken
@@ -826,7 +734,7 @@ public static class SysfsHelper
                 return;
         }
         Helpers.Logger.WriteLine(
-            $"sudo -n {key} refused; non-interactive path, skipping pkexec (fix sudoers via Updates > Install/Repair)");
+            $"privileged operation refused for {key}; package attestation is unavailable");
     }
 
     /// <summary>
@@ -837,109 +745,18 @@ public static class SysfsHelper
     public static (string? stdout, string stderr, int exitCode) RunSudoOrPkexecEx(
         string command, string[] args, int sudoTimeoutMs = 5000, int pkexecTimeoutMs = 60000, bool allowPkexec = true)
     {
-        var sudoArgs = new string[args.Length + 2];
-        sudoArgs[0] = "-n";
-        sudoArgs[1] = command;
-        Array.Copy(args, 0, sudoArgs, 2, args.Length);
-
-        var (exitCode, stdout, stderr) = RunProcessWithStderr(SudoPath, sudoArgs, sudoTimeoutMs);
-        if (exitCode == 0)
-            return (stdout, stderr, 0);
-
-        bool sudoRefused = stderr.StartsWith("sudo:", StringComparison.Ordinal)
-                        || stderr.Contains("not allowed to execute", StringComparison.Ordinal)
-                        || stderr.Contains("may not run sudo", StringComparison.Ordinal);
-        if (!sudoRefused)
-            return (null, stderr, exitCode);
-
-        if (!allowPkexec)
-        {
-            LogEscalationSkip(command, args);
-            return (null, stderr, exitCode);
-        }
-
-        var pkArgs = new string[args.Length + 1];
-        pkArgs[0] = command;
-        Array.Copy(args, 0, pkArgs, 1, args.Length);
-        var (pkExit, pkOut, pkErr) = RunProcessWithStderr("pkexec", pkArgs, pkexecTimeoutMs);
-        return (pkExit == 0 ? pkOut : null, pkErr, pkExit);
+        LogEscalationSkip(command, args);
+        return (null, "package attestation unavailable", 126);
     }
 
     /// <summary>
-    /// Like <see cref="RunSudoOrPkexecEx"/> but stdout is preserved even when
-    /// the command exits non-zero. For tools like ryzenadj that report per-item
-    /// results on stdout and exit non-zero if any single item failed.
+    /// Compatibility result shape for disabled legacy callers.
     /// </summary>
     public static (string stdout, string stderr, int exitCode) RunSudoOrPkexecRaw(
         string command, string[] args, int sudoTimeoutMs = 5000, int pkexecTimeoutMs = 60000, bool allowPkexec = true)
     {
-        var sudoArgs = new string[args.Length + 2];
-        sudoArgs[0] = "-n";
-        sudoArgs[1] = command;
-        Array.Copy(args, 0, sudoArgs, 2, args.Length);
-
-        var (exitCode, stdout, stderr) = RunProcessWithStderr(SudoPath, sudoArgs, sudoTimeoutMs);
-
-        bool sudoRefused = exitCode != 0
-                        && (stderr.StartsWith("sudo:", StringComparison.Ordinal)
-                         || stderr.Contains("not allowed to execute", StringComparison.Ordinal)
-                         || stderr.Contains("may not run sudo", StringComparison.Ordinal));
-        if (!sudoRefused)
-            return (stdout, stderr, exitCode);
-
-        if (!allowPkexec)
-        {
-            LogEscalationSkip(command, args);
-            return (stdout, stderr, exitCode);
-        }
-
-        var pkArgs = new string[args.Length + 1];
-        pkArgs[0] = command;
-        Array.Copy(args, 0, pkArgs, 1, args.Length);
-        var (pkExit, pkOut, pkErr) = RunProcessWithStderr("pkexec", pkArgs, pkexecTimeoutMs);
-        return (pkOut, pkErr, pkExit);
-    }
-
-    /// <summary>Run a command and return (exitCode, stdout, stderr). Never returns null.</summary>
-    private static (int exitCode, string stdout, string stderr) RunProcessWithStderr(
-        string command, string[] args, int timeoutMs)
-    {
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = command,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            foreach (var arg in args)
-                psi.ArgumentList.Add(arg);
-
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null)
-                return (-1, "", "process start returned null");
-
-            var outTask = proc.StandardOutput.ReadToEndAsync();
-            var errTask = proc.StandardError.ReadToEndAsync();
-
-            if (!outTask.Wait(timeoutMs))
-            {
-                try
-                { proc.Kill(); }
-                catch { }
-                Helpers.Logger.WriteLine($"RunCommand timeout: {command} {string.Join(" ", args)}");
-                return (-1, "", "timeout");
-            }
-
-            proc.WaitForExit(100);
-            return (proc.ExitCode, outTask.Result.Trim(), errTask.IsCompleted ? errTask.Result.Trim() : "");
-        }
-        catch (Exception ex)
-        {
-            return (-1, "", ex.Message);
-        }
+        LogEscalationSkip(command, args);
+        return ("", "package attestation unavailable", 126);
     }
 
     /// <summary>Run a command with explicit args (no whitespace splitting).</summary>

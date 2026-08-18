@@ -1,321 +1,127 @@
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace GHelper.Linux.Helpers;
 
 /// <summary>
-/// Extracts embedded native libraries and helper executables to
-/// ~/.cache/ghelper/libs/ and preloads the libraries before SkiaSharp/
-/// Avalonia initialises.
-///
-/// Always re-extracts on launch so a new build's payload reaches disk
-/// without any version stamping. Any leftover helper process from a
-/// previous run is reaped first to avoid the Linux "Text file busy"
-/// race on overwriting a running executable.
-///
-/// Every extraction outcome is logged via <see cref="Logger"/> so the
-/// startup banner and the diagnostics dump show which resources made it
-/// to disk, where they came from, and how big they ended up.
+/// Materializes native resources from this exact managed executable. Cached
+/// files are trusted only when their SHA-256 matches the embedded bytes. No
+/// executable, library, PATH entry, or stale cache entry is used as fallback.
 /// </summary>
 public static class NativeLibExtractor
 {
-    private static readonly string HomeDir =
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    private static readonly string HomeDir = AbsoluteUserPaths.HomeDirectory();
 
-    private static readonly string CacheDir = Path.Combine(
-        HomeDir, ".cache", "ghelper", "libs");
+    private static readonly string CacheDir =
+        AbsoluteUserPaths.CachePath("ghelper", "libs");
 
     private static readonly string[] NativeLibs = ["libHarfBuzzSharp.so", "libSkiaSharp.so"];
-
-    /// <summary>
-    /// Replace the user's home prefix with "~/" so log lines stay concise
-    /// and don't leak the actual username into shared diagnostic dumps.
-    /// </summary>
-    private static string Short(string path)
-    {
-        if (!string.IsNullOrEmpty(HomeDir) && path.StartsWith(HomeDir, StringComparison.Ordinal))
-        {
-            var tail = path.Substring(HomeDir.Length).TrimStart('/');
-            return tail.Length == 0 ? "~" : "~/" + tail;
-        }
-        return path;
-    }
-
-    /// <summary>Helper executables extracted eagerly so spawn paths are fast.</summary>
     private static readonly string[] EagerTools = ["ghelper-audio"];
-
-    private static readonly Dictionary<string, IntPtr> _loadedLibs = new();
+    private static readonly Dictionary<string, IntPtr> LoadedLibs = new();
 
     public static void ExtractAndLoad()
     {
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? ".";
-        Logger.WriteLine($"NativeLibExtractor: starting (cache={Short(CacheDir)})");
-
-        KillStaleHelpers();
+        AtomicPayloadInstaller.EnsurePrivateDirectory(CacheDir);
+        Logger.WriteLine($"NativeLibExtractor: starting (content-addressed cache={Short(CacheDir)})");
 
         foreach (var lib in NativeLibs)
         {
-            IntPtr handle = IntPtr.Zero;
-            string loadSource = "none";
-
-            var nextToBinary = Path.Combine(exeDir, lib);
-            if (File.Exists(nextToBinary))
-            {
-                try
-                {
-                    handle = NativeLibrary.Load(nextToBinary);
-                    loadSource = "exe-dir";
-                }
-                catch (Exception ex)
-                {
-                    Logger.WriteLine($"NativeLibExtractor: {lib} load from exe-dir failed: {ex.Message}");
-                }
-            }
-
-            if (handle == IntPtr.Zero)
-            {
-                var extracted = ExtractFromResources(lib);
-                if (extracted != null)
-                {
-                    try
-                    {
-                        handle = NativeLibrary.Load(extracted);
-                        loadSource = "embedded";
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.WriteLine($"NativeLibExtractor: {lib} load from cache failed: {ex.Message}");
-                    }
-                }
-            }
-
-            if (handle == IntPtr.Zero)
-            {
-                try
-                {
-                    handle = NativeLibrary.Load(lib);
-                    loadSource = "system";
-                }
-                catch (Exception ex)
-                {
-                    Logger.WriteLine($"NativeLibExtractor: {lib} load from system path failed: {ex.Message}");
-                }
-            }
-
-            if (handle != IntPtr.Zero)
-            {
-                var libName = Path.GetFileNameWithoutExtension(lib);
-                _loadedLibs[libName] = handle;
-                _loadedLibs[lib] = handle;
-                Logger.WriteLine($"NativeLibExtractor: loaded {lib} from {loadSource}");
-            }
-            else
-            {
-                Logger.WriteLine($"NativeLibExtractor: ERROR could not load {lib} from any source");
-            }
-        }
-
-        try
-        {
-            NativeLibrary.SetDllImportResolver(typeof(SkiaSharp.SKPaint).Assembly, ResolveNativeLib);
-        }
-        catch (Exception ex)
-        {
-            Logger.WriteLine($"NativeLibExtractor: SkiaSharp resolver hook failed: {ex.Message}");
-        }
-
-        try
-        {
-            NativeLibrary.SetDllImportResolver(typeof(HarfBuzzSharp.Blob).Assembly, ResolveNativeLib);
-        }
-        catch (Exception ex)
-        {
-            Logger.WriteLine($"NativeLibExtractor: HarfBuzz resolver hook failed: {ex.Message}");
-        }
-
-        foreach (var tool in EagerTools)
-        {
+            string path = ExtractRequired(lib, executable: false);
+            IntPtr handle;
             try
             {
-                var path = ExtractFromResources(tool);
-                if (path == null)
-                    Logger.WriteLine($"NativeLibExtractor: eager extract of {tool} produced no path");
+                handle = NativeLibrary.Load(path);
             }
             catch (Exception ex)
             {
-                Logger.WriteLine($"NativeLibExtractor: eager extract of {tool} threw: {ex.Message}");
+                throw new InvalidOperationException(
+                    $"refusing unverified fallback after {lib} load failure", ex);
             }
+
+            var libName = Path.GetFileNameWithoutExtension(lib);
+            LoadedLibs[libName] = handle;
+            LoadedLibs[lib] = handle;
+            Logger.WriteLine($"NativeLibExtractor: loaded verified embedded {lib}");
         }
+
+        NativeLibrary.SetDllImportResolver(typeof(SkiaSharp.SKPaint).Assembly, ResolveNativeLib);
+        NativeLibrary.SetDllImportResolver(typeof(HarfBuzzSharp.Blob).Assembly, ResolveNativeLib);
+
+        foreach (var tool in EagerTools)
+            _ = ExtractFromResources(tool, executable: true);
 
         Logger.WriteLine("NativeLibExtractor: done");
     }
 
     /// <summary>
-    /// Find an embedded tool binary (e.g. wlr-randr, ghelper-audio).
-    /// Always re-extracts when the resource exists; falls back to the
-    /// cached copy or the system PATH otherwise.
+    /// Resolve only a verified resource embedded in this executable. Absence or
+    /// extraction failure returns null; cached and PATH executables are never
+    /// accepted independently.
     /// </summary>
     public static string? FindTool(string toolName)
+        => ExtractFromResources(toolName, executable: true);
+
+    private static string ExtractRequired(string resourceName, bool executable)
+        => ExtractFromResources(resourceName, executable)
+           ?? throw new InvalidOperationException(
+               $"required embedded payload unavailable: {resourceName}");
+
+    private static string? ExtractFromResources(string resourceName, bool executable)
     {
-        var extracted = ExtractFromResources(toolName);
-        if (extracted != null)
-            return extracted;
-
-        var cached = Path.Combine(CacheDir, toolName);
-        if (File.Exists(cached))
-        {
-            Logger.WriteLine($"NativeLibExtractor: FindTool({toolName}) using cached copy {Short(cached)}");
-            return cached;
-        }
-
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "which",
-                Arguments = toolName,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc != null)
-            {
-                var path = proc.StandardOutput.ReadToEnd().Trim();
-                proc.WaitForExit(3000);
-                if (proc.ExitCode == 0 && path.Length > 0)
-                {
-                    Logger.WriteLine($"NativeLibExtractor: FindTool({toolName}) resolved via PATH at {Short(path)}");
-                    return path;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.WriteLine($"NativeLibExtractor: FindTool({toolName}) PATH lookup failed: {ex.Message}");
-        }
-
-        Logger.WriteLine($"NativeLibExtractor: FindTool({toolName}) not found");
-        return null;
-    }
-
-    private static IntPtr ResolveNativeLib(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
-    {
-        if (_loadedLibs.TryGetValue(libraryName, out var handle))
-            return handle;
-        if (_loadedLibs.TryGetValue(libraryName + ".so", out handle))
-            return handle;
-        return IntPtr.Zero;
-    }
-
-    /// <summary>
-    /// Unconditionally extract an embedded resource to the cache directory.
-    /// Logs and returns null on failure; on ETXTBSY (cached binary still
-    /// executing) returns the existing stale path so the caller can fall
-    /// back to spawning what is already on disk.
-    /// </summary>
-    private static string? ExtractFromResources(string resourceName)
-    {
-        var asm = typeof(NativeLibExtractor).Assembly;
-        var targetPath = Path.Combine(CacheDir, resourceName);
-
-        Stream? stream = null;
-        try
-        {
-            stream = asm.GetManifestResourceStream(resourceName);
+            var assembly = typeof(NativeLibExtractor).Assembly;
+            using var stream = assembly.GetManifestResourceStream(resourceName);
             if (stream == null)
             {
-                Logger.WriteLine($"NativeLibExtractor: resource {resourceName} not embedded; skipping");
+                Logger.WriteLine($"NativeLibExtractor: embedded resource absent: {resourceName}");
                 return null;
             }
 
-            Directory.CreateDirectory(CacheDir);
-            long expectedLength = stream.Length;
-
-            try
+            using var payload = new MemoryStream();
+            stream.CopyTo(payload);
+            byte[] bytes = payload.ToArray();
+            string targetPath = AtomicPayloadInstaller.ContentAddressedPath(
+                CacheDir, resourceName, bytes);
+            if (!AtomicPayloadInstaller.EnsureExact(
+                    bytes, targetPath, executable, out string error))
             {
-                using var fs = File.Create(targetPath);
-                stream.CopyTo(fs);
-                if (fs.Length != expectedLength)
-                {
-                    Logger.WriteLine($"NativeLibExtractor: short write for {resourceName} ({fs.Length}/{expectedLength}) at {Short(targetPath)}");
-                    return null;
-                }
-            }
-            catch (IOException ex)
-            {
-                bool busy = ex.Message.Contains("Text file busy", StringComparison.OrdinalIgnoreCase)
-                         || ex.Message.Contains("ETXTBSY", StringComparison.OrdinalIgnoreCase);
-                Logger.WriteLine(busy
-                    ? $"NativeLibExtractor: {resourceName} is busy (ETXTBSY); falling back to stale {Short(targetPath)}"
-                    : $"NativeLibExtractor: IO error writing {resourceName} to {Short(targetPath)}: {ex.Message}");
-                return File.Exists(targetPath) ? targetPath : null;
+                Logger.WriteLine(
+                    $"NativeLibExtractor: refusing {resourceName}; verified extraction failed: {error}");
+                return null;
             }
 
-#pragma warning disable CA1416
-            File.SetUnixFileMode(targetPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-#pragma warning restore CA1416
-
-            Logger.WriteLine($"NativeLibExtractor: extracted {resourceName} -> {Short(targetPath)} ({FormatSize(expectedLength)})");
+            Logger.WriteLine(
+                $"NativeLibExtractor: verified {resourceName} -> {Short(targetPath)} ({FormatSize(payload.Length)})");
             return targetPath;
         }
         catch (Exception ex)
         {
-            Logger.WriteLine($"NativeLibExtractor: extract failed for {resourceName}: {ex.Message}");
+            Logger.WriteLine($"NativeLibExtractor: verified extraction failed for {resourceName}: {ex.Message}");
             return null;
         }
-        finally
-        {
-            stream?.Dispose();
-        }
     }
 
-    /// <summary>
-    /// Reap leftover helper processes by exact name so a still-running
-    /// child from a previous G-Helper run does not block File.Create from
-    /// overwriting its executable in the cache (Linux ETXTBSY rule).
-    /// </summary>
-    private static void KillStaleHelpers()
+    private static IntPtr ResolveNativeLib(
+        string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
-        foreach (var name in EagerTools)
-        {
-            try
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "pkill",
-                    Arguments = $"-x {name}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var proc = Process.Start(psi);
-                if (proc != null)
-                {
-                    proc.WaitForExit(2000);
-                    if (proc.ExitCode == 0)
-                        Logger.WriteLine($"NativeLibExtractor: reaped leftover {name} process(es)");
-                    else
-                        Logger.WriteLine($"NativeLibExtractor: no leftover {name} processes to reap");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.WriteLine($"NativeLibExtractor: could not reap {name}: {ex.Message}");
-            }
-        }
+        if (LoadedLibs.TryGetValue(libraryName, out var handle))
+            return handle;
+        if (LoadedLibs.TryGetValue(libraryName + ".so", out handle))
+            return handle;
+        return IntPtr.Zero;
     }
 
-    /// <summary>
-    /// Human-readable byte size used in log messages so operators can
-    /// eyeball whether the expected payload sits on disk. Bytes / KiB /
-    /// MiB granularity is plenty for our ~150 KB - ~10 MB range.
-    /// </summary>
+    private static string Short(string path)
+    {
+        if (!string.IsNullOrEmpty(HomeDir) && path.StartsWith(HomeDir, StringComparison.Ordinal))
+        {
+            var tail = path[HomeDir.Length..].TrimStart('/');
+            return tail.Length == 0 ? "~" : "~/" + tail;
+        }
+        return path;
+    }
+
     private static string FormatSize(long bytes)
     {
         if (bytes < 1024)

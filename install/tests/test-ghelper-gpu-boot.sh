@@ -14,7 +14,6 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BOOT_SCRIPT="$(cd "$SCRIPT_DIR/.." && pwd)/ghelper-gpu-boot.sh"
-[[ -x "$BOOT_SCRIPT" ]] || chmod +x "$BOOT_SCRIPT"
 
 if [[ ! -f "$BOOT_SCRIPT" ]]; then
     echo "FATAL: boot script not found at $BOOT_SCRIPT" >&2
@@ -22,6 +21,18 @@ if [[ ! -f "$BOOT_SCRIPT" ]]; then
 fi
 
 PATTERN="${1:-}"
+HARNESS_ROOT="$(mktemp -d -t ghelper-boot-tests.XXXXXX)"
+chmod 700 "$HARNESS_ROOT"
+printf 'ghelper-phase1-harness-v1\n' > "$HARNESS_ROOT/.harness-marker"
+cleanup_harness() {
+    if [[ "$HARNESS_ROOT" == /tmp/ghelper-boot-tests.* \
+       && -f "$HARNESS_ROOT/.harness-marker" \
+       && "$(cat "$HARNESS_ROOT/.harness-marker")" == \
+          "ghelper-phase1-harness-v1" ]]; then
+        rm -rf -- "$HARNESS_ROOT"
+    fi
+}
+trap cleanup_harness EXIT
 
 # Test results
 TESTS_TOTAL=0
@@ -36,8 +47,7 @@ LOG_FILE=""
 # -- Sandbox helpers ------------------------------------------------------------
 new_sandbox() {
     local name="$1"
-    SANDBOX="/tmp/ghelper-test-${name//[^A-Za-z0-9_-]/_}"
-    rm -rf "$SANDBOX"
+    SANDBOX="$HARNESS_ROOT/${name//[^A-Za-z0-9_-]/_}"
     mkdir -p "$SANDBOX/sys/bus/platform/devices/asus-nb-wmi"
     mkdir -p "$SANDBOX/sys/devices/platform/asus-nb-wmi"
     mkdir -p "$SANDBOX/sys/class/firmware-attributes/asus-armoury/attributes"
@@ -49,6 +59,9 @@ new_sandbox() {
     mkdir -p "$SANDBOX/etc/ghelper"
     mkdir -p "$SANDBOX/etc/modprobe.d"
     mkdir -p "$SANDBOX/etc/udev/rules.d"
+    chmod 700 "$SANDBOX"
+    printf 'ghelper-phase1-test-sandbox-v1\n' > \
+        "$SANDBOX/.ghelper-test-sandbox"
     : > "$SANDBOX/sys/bus/pci/rescan"
     LOG_FILE="$SANDBOX/test.log"
 }
@@ -170,7 +183,7 @@ scenario() {
     if "test_$name"; then
         echo "  PASS"
         TESTS_PASSED=$((TESTS_PASSED + 1))
-        rm -rf "$SANDBOX"
+        rm -rf -- "$SANDBOX"
     else
         echo "  FAIL ($SANDBOX preserved)"
         TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -1599,6 +1612,42 @@ test_90_mux0_clean_ultimate() {
     expect_file_content /sys/bus/platform/devices/asus-nb-wmi/gpu_mux_mode 0 || return 1
 }
 
+expect_test_root_rejected() {
+    local candidate="$1"
+    GHELPER_TEST_ROOT="$candidate" bash "$BOOT_SCRIPT" > "$LOG_FILE" 2>&1
+    local rc=$?
+    [[ "$rc" == "64" ]] || {
+        echo "  ASSERT FAIL: unsafe root '$candidate' exited $rc, expected 64"
+        return 1
+    }
+    expect_log_contains "refusing unsafe GHELPER_TEST_ROOT"
+}
+
+test_91_test_root_slash_rejected() {
+    expect_test_root_rejected /
+}
+
+test_92_test_root_relative_rejected() {
+    expect_test_root_rejected relative-sandbox
+}
+
+test_93_test_root_symlink_rejected() {
+    local link="$HARNESS_ROOT/sandbox-link"
+    ln -s "$SANDBOX" "$link"
+    expect_test_root_rejected "$link"
+}
+
+test_94_test_root_without_marker_rejected() {
+    rm -f "$SANDBOX/.ghelper-test-sandbox"
+    expect_test_root_rejected "$SANDBOX"
+}
+
+test_95_test_root_real_sys_escape_rejected() {
+    rm -rf "$SANDBOX/sys"
+    ln -s /sys "$SANDBOX/sys"
+    expect_test_root_rejected "$SANDBOX"
+}
+
 # -- Run ------------------------------------------------------------------------
 echo "═"
 echo " ghelper-gpu-boot.sh scenario tests"
@@ -1693,6 +1742,11 @@ for name in \
     88_mux0_persistent_eco_nvidia_bound \
     89_mux0_oneshot_eco_with_blocks \
     90_mux0_clean_ultimate \
+    91_test_root_slash_rejected \
+    92_test_root_relative_rejected \
+    93_test_root_symlink_rejected \
+    94_test_root_without_marker_rejected \
+    95_test_root_real_sys_escape_rejected \
 ; do
     scenario "$name"
 done
@@ -1702,7 +1756,7 @@ echo "Total: $TESTS_TOTAL   Passed: $TESTS_PASSED   Failed: $TESTS_FAILED"
 if (( TESTS_FAILED > 0 )); then
     echo "Failed scenarios:"
     for n in "${FAILED_NAMES[@]}"; do
-        echo "  - $n  (sandbox: /tmp/ghelper-test-$n)"
+        echo "  - $n  (sandbox: $HARNESS_ROOT/$n)"
     done
     exit 1
 fi

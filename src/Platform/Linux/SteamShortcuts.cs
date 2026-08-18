@@ -43,7 +43,7 @@ public static class SteamShortcuts
         if (RootOverride != null)
             return Directory.Exists(RootOverride) ? RootOverride : null;
 
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string home = AbsoluteUserPaths.HomeDirectory();
         string[] roots =
         [
             Path.Combine(home, ".steam", "steam"),

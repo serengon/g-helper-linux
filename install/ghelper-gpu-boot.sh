@@ -7,7 +7,8 @@
 # Set GHELPER_TEST_ROOT to redirect all paths into a sandbox for testing.
 # See install/tests/test-ghelper-gpu-boot.sh for the test harness.
 #
-# Must never block boot. Always exits 0.
+# Normal production operation must never block boot and exits 0. An explicitly
+# supplied unsafe test root is rejected before path construction with EX_USAGE.
 
 # No set -e: individual errors are handled.
 set -uo pipefail
@@ -16,6 +17,26 @@ LOG_TAG="ghelper-gpu-boot"
 
 # Sandbox root (empty in production, set to a temp dir in tests).
 ROOT="${GHELPER_TEST_ROOT:-}"
+if [[ -n "$ROOT" ]]; then
+    reject_test_root() {
+        echo "ghelper-gpu-boot: refusing unsafe GHELPER_TEST_ROOT" >&2
+        exit 64
+    }
+    [[ "$ROOT" == /* && "$ROOT" != "/" && -d "$ROOT" && ! -L "$ROOT" ]] \
+        || reject_test_root
+    canonical_root="$(realpath -e -- "$ROOT" 2>/dev/null)" || reject_test_root
+    [[ "$canonical_root" == "$ROOT" \
+       && "$(stat -c %u "$ROOT" 2>/dev/null)" == "$(id -u)" \
+       && -f "$ROOT/.ghelper-test-sandbox" \
+       && ! -L "$ROOT/.ghelper-test-sandbox" \
+       && "$(cat "$ROOT/.ghelper-test-sandbox" 2>/dev/null)" == \
+          "ghelper-phase1-test-sandbox-v1" ]] || reject_test_root
+    for sandbox_tree in sys etc; do
+        tree_path="$(realpath -e -- "$ROOT/$sandbox_tree" 2>/dev/null)" \
+            || reject_test_root
+        [[ "$tree_path" == "$ROOT/$sandbox_tree" ]] || reject_test_root
+    done
+fi
 
 # Paths (all prefixed with $ROOT for testability).
 # Legacy asus-nb-wmi sysfs bases, tried in order.

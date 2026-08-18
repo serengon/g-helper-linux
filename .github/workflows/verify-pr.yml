@@ -1,0 +1,36 @@
+name: Hardened PR verification
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  phase1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      XDG_CACHE_HOME: ${{ runner.temp }}/ghelper-phase1-cache
+    steps:
+      - name: Check out reviewed commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Make upstream fetch-only
+        shell: bash
+        run: |
+          git switch -C x13-hardened
+          git remote set-url --push origin no_push://disabled
+          git remote add upstream https://github.com/utajum/g-helper-linux.git
+          git remote set-url --push upstream no_push://disabled
+
+      - name: Prepare pinned image and locked dependency cache
+        shell: bash
+        run: ./scripts/prepare-ci.sh
+
+      - name: Run exact Phase 1 acceptance
+        shell: bash
+        run: ./scripts/verify-phase1.sh

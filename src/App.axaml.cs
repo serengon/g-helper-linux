@@ -224,12 +224,10 @@ public class App : Application
             // Init fan sensor defaults for model-specific RPM formatting
             Fan.FanSensorControl.InitFanMax();
 
-            // Warn if udev rules are not installed (sysfs writes will fail).
-            // NixOS: the module provides udev rules via services.udev.packages.
-            if (!Platform.Linux.NixOS.SkipUdevWarning
-                && !File.Exists("/etc/udev/rules.d/90-ghelper.rules"))
+            // Phase 1 never attests or accepts legacy upstream udev content.
+            if (!Platform.Linux.NixOS.SkipUdevWarning)
             {
-                Logger.WriteLine("WARNING: udev rules not installed - sysfs writes will fail. Run install.sh for full functionality.");
+                Logger.WriteLine("WARNING: package-attested hardware access is unavailable; legacy udev rules are not trusted.");
                 System?.ShowNotification(Labels.Get("setup_required"),
                     Labels.Get("udev_not_installed"),
                     "dialog-warning");
@@ -402,11 +400,8 @@ public class App : Application
             if (AppConfig.IsLenovoDevice() && AppConfig.Is("lenovo_mic_boost_fix"))
                 Task.Run(() => Platform.Linux.Lenovo.LenovoFeatures.ApplyMicBoostFix());
 
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                Install.Installer.CheckAndPromptAtStartup(MainWindowInstance));
-
-            if (MainWindowInstance != null)
-                UI.Views.UpdatesWindow.CheckForUpdateAtStartup(MainWindowInstance);
+            Helpers.Logger.WriteLine(
+                "Package management: runtime self-install and self-update are disabled; the hardened installer is unavailable");
 
             // Register Unix signal handlers for clean shutdown on SIGTERM/SIGINT
             // This prevents KDE/GNOME from hanging on logout/reboot
@@ -672,14 +667,13 @@ public class App : Application
     private void SetupTrayIcon(IClassicDesktopStyleApplicationLifetime desktop)
     {
         // Tray icons on Linux use D-Bus StatusNotifierItem (SNI) protocol.
-        // This requires a valid DBUS_SESSION_BUS_ADDRESS - running with plain
-        // 'sudo' breaks this. Use udev rules for non-root access instead,
-        // or run with: sudo -E ./ghelper
+        // This requires a valid DBUS_SESSION_BUS_ADDRESS. The future hardened
+        // package must provide access without launching the desktop app as root.
         var dbusAddr = Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS");
         if (string.IsNullOrEmpty(dbusAddr))
         {
             Logger.WriteLine("WARNING: DBUS_SESSION_BUS_ADDRESS not set - tray icon will not appear.");
-            Logger.WriteLine("  Tip: Install udev rules to run without sudo, or use: sudo -E ./ghelper");
+            Logger.WriteLine("  The hardened package path is still under development; launch only in a user session.");
         }
 
         try

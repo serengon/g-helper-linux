@@ -1,0 +1,28 @@
+ARG DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk@sha256:e1ffd2a92ae84c1291bc1b6887501f8af98e6331e7af6d4c8d37168c5e87a64c
+FROM ${DOTNET_SDK_IMAGE}
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+        binutils \
+        clang \
+        file \
+        gcc \
+        git \
+        libpipewire-0.3-dev \
+        libwayland-dev \
+        make \
+        pkg-config \
+        pipewire-bin \
+        pipewire-pulse \
+        pulseaudio-utils \
+        python3 \
+        wayland-protocols \
+        wireplumber \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    NUGET_XMLDOC_MODE=skip
+
+WORKDIR /work

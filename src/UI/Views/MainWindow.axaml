@@ -526,7 +526,7 @@
 
                     <!-- Version -->
                     <TextBlock x:Name="labelVersion" Classes="label-dim" Cursor="Hand"
-                               Text="G-Helper Linux v1.0.0" FontSize="12" Margin="0,0,0,6" />
+                               Text="G-Helper Linux v1.0.90-x13.1" FontSize="12" Margin="0,0,0,6" />
 
                     <!-- Arcade (handhelds / SteamOS) -->
                     <Button x:Name="buttonArcade" Classes="ghelper"

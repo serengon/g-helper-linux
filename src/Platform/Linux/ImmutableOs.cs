@@ -50,14 +50,14 @@ public static class ImmutableOs
     // ~/.local/share/applications/ghelper.desktop
     public static string UserDesktopPath()
     {
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".local", "share", "applications", "ghelper.desktop");
+        return Helpers.AbsoluteUserPaths.DataPath(
+            "applications", "ghelper.desktop");
     }
 
     // ~/.local/share/icons/hicolor/256x256/apps/ghelper.png
     public static string UserIconPath()
     {
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".local", "share", "icons", "hicolor", "256x256", "apps", "ghelper.png");
+        return Helpers.AbsoluteUserPaths.DataPath(
+            "icons", "hicolor", "256x256", "apps", "ghelper.png");
     }
 }

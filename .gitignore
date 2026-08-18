@@ -5,6 +5,7 @@ tests/**/bin/
 tests/**/obj/
 dist/
 build/
+.build-cache/
 
 # Audio helper (C build artifacts; sources are tracked, objects/binary are not)
 audio-helper/*.o

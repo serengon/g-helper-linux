@@ -234,7 +234,6 @@ public partial class ExtraWindow : Window
         labelRenderMode.Text = Labels.Get("render_mode_label");
         labelRenderModeHint.Text = Labels.Get("render_mode_hint");
         InitRenderModeCombo();
-        checkSkipUpdatePrompt.Content = Labels.Get("skip_update_prompt_label");
         checkDisableAudio.Content = Labels.Get("disable_audio_label");
         checkDisableOsd.Content = Labels.Get("disable_osd_label");
         checkKeepBacklight.Content = Labels.Get("keep_backlight_on");
@@ -1144,8 +1143,6 @@ public partial class ExtraWindow : Window
         // full-template output that install-local.sh writes.
         checkUdevPerMachine.IsChecked = Helpers.AppConfig.Is("udev_per_machine");
 
-        checkSkipUpdatePrompt.IsChecked = Helpers.AppConfig.Is("skip_update_prompt");
-
         checkDisableAudio.IsChecked = Helpers.AppConfig.Is("disable_audio");
 
         // Disable OSD/notifications
@@ -1807,13 +1804,6 @@ public partial class ExtraWindow : Window
             Helpers.AppConfig.Remove("render_mode");
         else
             Helpers.AppConfig.Set("render_mode", tag);
-    }
-
-    private void CheckSkipUpdatePrompt_Changed(object? sender, RoutedEventArgs e)
-    {
-        if (_suppressEvents)
-            return;
-        Helpers.AppConfig.Set("skip_update_prompt", (checkSkipUpdatePrompt.IsChecked ?? false) ? 1 : 0);
     }
 
     private void CheckDisableAudio_Changed(object? sender, RoutedEventArgs e)

@@ -32,7 +32,10 @@ spawn_helper() {
     # (O_RDWR) succeeds immediately without a peer. We use fd 9 to write
     # commands later via send_cmd.
     exec 9<>"$HELPER_STDIN"
-    "$GHELPER_AUDIO_BIN" <"$HELPER_STDIN" >"$HELPER_OUT" 2>"$HELPER_ERR" &
+    # Tests inspect frames while the helper is still running. Disable stdio
+    # buffering so a forced cleanup cannot hide otherwise valid frames in the
+    # process-local buffer.
+    stdbuf -o0 "$GHELPER_AUDIO_BIN" <"$HELPER_STDIN" >"$HELPER_OUT" 2>"$HELPER_ERR" &
     HELPER_PID=$!
     # Wait for "ready" line (helper writes it to stderr right after init).
     local i=0

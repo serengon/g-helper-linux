@@ -1,11 +1,9 @@
 using System.Diagnostics;
-using System.Net.Http;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using GHelper.Linux.Helpers;
 using GHelper.Linux.I18n;
 
@@ -13,9 +11,8 @@ namespace GHelper.Linux.UI.Views;
 
 // Maps the small Markdown block model from ChangelogParser to Avalonia
 // controls. Palette and spacing chosen to match UpdatesWindow / FansWindow
-// so the new window looks native to the app. Images are fetched async on
-// background tasks; the renderer hands back a list of disposables so the
-// owning window can dispose decoded bitmaps when it closes.
+// so the new window looks native to the app. Remote images are deliberately
+// represented as user-clickable placeholders; Phase 1 never fetches them.
 internal static class ChangelogRenderer
 {
     private static readonly IBrush ColorText = new SolidColorBrush(Color.Parse("#F0F0F0"));
@@ -203,47 +200,33 @@ internal static class ChangelogRenderer
 
     private static InlineUIContainer BuildInlineImage(string url, string alt, List<Bitmap> bitmapSink)
     {
-        var img = new Image
+        var link = new Button
         {
-            Stretch = Stretch.Uniform,
-            MaxHeight = 120,
-            Margin = new Avalonia.Thickness(2, 0, 2, 0),
+            Content = string.IsNullOrWhiteSpace(alt) ? "[image]" : $"[image: {alt}]",
+            Background = Brushes.Transparent,
+            BorderThickness = new Avalonia.Thickness(0),
+            Padding = new Avalonia.Thickness(2, 0),
             Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
         };
-        ToolTip.SetTip(img, string.IsNullOrEmpty(alt) ? url : alt);
-        img.PointerPressed += (_, _) => OpenInBrowser(url);
-        _ = LoadImageAsync(url, img, bitmapSink);
-        return new InlineUIContainer { Child = img };
+        ToolTip.SetTip(link, url);
+        link.Click += (_, _) => OpenInBrowser(url);
+        return new InlineUIContainer { Child = link };
     }
 
     private static Control RenderBlockImage(string url, string alt, List<Bitmap> bitmapSink)
     {
-        var img = new Image
+        var link = new Button
         {
-            Stretch = Stretch.Uniform,
-            StretchDirection = StretchDirection.DownOnly,
-            MaxWidth = 680,
+            Content = string.IsNullOrWhiteSpace(alt)
+                ? "Remote image (open link)"
+                : $"{alt} (open image link)",
+            Background = Brushes.Transparent,
+            BorderThickness = new Avalonia.Thickness(0),
+            Foreground = ColorLink,
             Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
         };
-        ToolTip.SetTip(img, string.IsNullOrEmpty(alt) ? url : alt);
-        img.PointerPressed += (_, _) => OpenInBrowser(url);
-
-        var caption = new TextBlock
-        {
-            Text = string.IsNullOrEmpty(alt) ? Labels.Get("changelog_loading") : alt,
-            Foreground = ColorDim,
-            FontSize = 11,
-            FontStyle = FontStyle.Italic,
-            TextWrapping = TextWrapping.Wrap,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Avalonia.Thickness(0, 4, 0, 0),
-        };
-
-        var stack = new StackPanel { Spacing = 2 };
-        stack.Children.Add(img);
-        // Caption only when alt text exists - GitHub-style upload tags use alt="image" placeholder.
-        if (!string.IsNullOrEmpty(alt) && !alt.Equals("image", StringComparison.OrdinalIgnoreCase))
-            stack.Children.Add(caption);
+        ToolTip.SetTip(link, url);
+        link.Click += (_, _) => OpenInBrowser(url);
 
         var border = new Border
         {
@@ -252,35 +235,9 @@ internal static class ChangelogRenderer
             Padding = new Avalonia.Thickness(8),
             Margin = new Avalonia.Thickness(0, 6, 0, 6),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Child = stack,
+            Child = link,
         };
-
-        _ = LoadImageAsync(url, img, bitmapSink);
         return border;
-    }
-
-    private static async Task LoadImageAsync(string url, Image target, List<Bitmap> bitmapSink)
-    {
-        try
-        {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Add("User-Agent",
-                "G-Helper-Linux/" + Helpers.AppConfig.AppVersion);
-            http.Timeout = TimeSpan.FromSeconds(12);
-            var bytes = await http.GetByteArrayAsync(url);
-            using var ms = new MemoryStream(bytes);
-            var bitmap = new Bitmap(ms);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                target.Source = bitmap;
-                lock (bitmapSink)
-                    bitmapSink.Add(bitmap);
-            });
-        }
-        catch (Exception ex)
-        {
-            Logger.WriteLine($"ChangelogRenderer: image load failed '{url}': {ex.Message}");
-        }
     }
 
     internal static void OpenInBrowser(string url)
@@ -297,4 +254,3 @@ internal static class ChangelogRenderer
         }
     }
 }
-
