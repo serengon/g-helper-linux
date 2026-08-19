@@ -50,6 +50,9 @@ public class LinuxDisplayControl : IDisplayControl
 
     public void SetBrightness(int percent)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("display brightness"))
+            return;
+
         if (_backlightDir == null || _maxBrightness <= 0)
             return;
 
@@ -70,6 +73,9 @@ public class LinuxDisplayControl : IDisplayControl
 
     public void SetRefreshRate(int hz)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("display refresh rate"))
+            return;
+
         if (_backend == null)
         {
             Helpers.Logger.WriteLine("SetRefreshRate: no display backend available");
@@ -81,6 +87,9 @@ public class LinuxDisplayControl : IDisplayControl
 
     public void SetGamma(float r, float g, float b)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("display gamma"))
+            return;
+
         if (_backend == null)
             return;
 

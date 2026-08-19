@@ -9,6 +9,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using GHelper.Linux.Gpu;
 using GHelper.Linux.Gpu.NVidia;
+using GHelper.Linux.Daemon;
 using GHelper.Linux.Helpers;
 using GHelper.Linux.I18n;
 using GHelper.Linux.Platform.Linux;
@@ -51,9 +52,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        panelAudio.IsVisible = !Helpers.AppConfig.Is("disable_audio");
+        panelAudio.IsVisible = !RuntimeMode.IsPocReadOnly
+            && !Helpers.AppConfig.Is("disable_audio");
         Labels.LanguageChanged += () => Avalonia.Threading.Dispatcher.UIThread.Post(() => ApplyLabels());
-        InitDonate();
+        if (!RuntimeMode.IsPocReadOnly)
+            InitDonate();
 
         // Refresh timer for live sensor data
         _refreshTimer = new DispatcherTimer
@@ -89,13 +92,15 @@ public partial class MainWindow : Window
         // App.IsShuttingDown=true before windows are walked for closing.
         Closing += (_, e) =>
         {
-            if (!App.IsShuttingDown)
+            if (RuntimeMode.ShouldHideMainWindowOnClose(App.IsShuttingDown))
             {
                 e.Cancel = true;
                 Hide();
                 _refreshTimer.Stop();
                 return;
             }
+            if (RuntimeMode.IsPocMode)
+                App.IsShuttingDown = true;
             _refreshTimer.Stop();
             App.MainWindowInstance = null;
         };
@@ -111,6 +116,8 @@ public partial class MainWindow : Window
             RefreshAll();
             HookFnLockChanged();
         };
+
+        ApplyPocReadOnlyPresentation();
     }
 
     /// <summary>
@@ -172,6 +179,99 @@ public partial class MainWindow : Window
         bool devMode = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GHELPER_DEV"));
         buttonDevWindows.IsVisible = devMode;
         buttonDevPanels.IsVisible = devMode;
+
+        ApplyPocReadOnlyPresentation();
+    }
+
+    private void ApplyPocReadOnlyPresentation()
+    {
+        if (!RuntimeMode.IsPocMode)
+            return;
+
+        pocReadOnlyBanner.IsVisible = true;
+        Title = $"G-Helper - {RuntimeMode.ModeBanner}";
+        pocBannerTitle.Text = RuntimeMode.ModeBanner;
+        pocBannerDetails.Text = RuntimeMode.IsInstalledMvp
+            ? "Installed XG Mobile MVP. Hardware controls are enabled; system setup is managed by the installer."
+            : RuntimeMode.IsPocFunctional
+            ? "All detected laptop controls are enabled. Installer, updater and autostart remain disabled."
+            : "Live hardware status. Controls, autostart, updates and services are disabled.";
+
+        // Functional POC: keep the real hardware-aware enable/visibility state.
+        // Only the self-install/update surfaces stay unavailable in this build.
+        if (RuntimeMode.IsPocFunctional)
+        {
+            _suppressEvents = true;
+            checkStartup.IsChecked = RuntimeMode.IsInstalledMvp;
+            _suppressEvents = false;
+            checkStartup.IsEnabled = false;
+            checkStartup.Content = RuntimeMode.IsInstalledMvp
+                ? "Autostart managed by MVP installation"
+                : "Autostart disabled in POC";
+            buttonUpdates.IsVisible = false;
+            buttonDevWindows.IsVisible = false;
+            buttonDevPanels.IsVisible = false;
+            return;
+        }
+
+        // Main status labels and sensor polling remain live. Every control
+        // that can change hardware, config, services, autostart, or launch a
+        // secondary mutating surface is disabled or hidden.
+        foreach (var control in new Avalonia.Controls.Control[]
+        {
+            buttonSilent, buttonBalanced, buttonTurbo, buttonFans,
+            buttonEco, buttonStandard, buttonUltimate, buttonOptimized, buttonXGM,
+            buttonScreenAuto, button60Hz, button120Hz, buttonMiniled,
+            buttonControllerMode, buttonAllyBacklight, buttonOpenHandheld,
+            buttonOsk, buttonFnLock, buttonKeyboard, buttonExtra,
+            comboAuraMode, comboAuraSpeed, buttonColor1, buttonColor2,
+            buttonAudio, buttonAudioToggle,
+            comboMatrixMode, comboMatrixBrightness, buttonMatrixSettings,
+            sliderBattery, buttonBattery60, buttonBattery80, buttonBattery100,
+            buttonPeripheral1, buttonPeripheral2, buttonPeripheral3,
+            checkStartup,
+        })
+        {
+            control.IsEnabled = false;
+        }
+
+        panelAura.IsVisible = false;
+        panelAudio.IsVisible = false;
+        panelAnimeMatrix.IsVisible = false;
+        panelAlly.IsVisible = false;
+        panelPeripherals.IsVisible = false;
+        buttonDonate.IsVisible = false;
+        buttonUpdates.IsVisible = false;
+        buttonArcade.IsVisible = false;
+        buttonDevWindows.IsVisible = false;
+        buttonDevPanels.IsVisible = false;
+        _suppressEvents = true;
+        checkStartup.IsChecked = false;
+        _suppressEvents = false;
+        checkStartup.Content = "Autostart disabled in POC";
+    }
+
+    private void SetFunctionalControlsEnabled(bool enabled)
+    {
+        buttonSilent.IsEnabled = enabled;
+        buttonBalanced.IsEnabled = enabled;
+        buttonTurbo.IsEnabled = enabled;
+        sliderBattery.IsEnabled = enabled;
+        buttonBattery60.IsEnabled = enabled;
+        buttonBattery80.IsEnabled = enabled;
+        buttonBattery100.IsEnabled = enabled;
+    }
+
+    private void EnforcePocGpuMutationControlsDisabled()
+    {
+        if (!RuntimeMode.IsPocReadOnly)
+            return;
+
+        buttonEco.IsEnabled = false;
+        buttonStandard.IsEnabled = false;
+        buttonOptimized.IsEnabled = false;
+        buttonUltimate.IsEnabled = false;
+        buttonXGM.IsEnabled = false;
     }
 
     // Peripherals (ASUS + Logitech mice)
@@ -459,6 +559,21 @@ public partial class MainWindow : Window
 
     private void SetPerformanceMode(int mode)
     {
+        if (RuntimeMode.IsPocFunctional)
+        {
+            SetFunctionalControlsEnabled(false);
+            var result = Platform.Linux.AsusctlControlBridge.SetPerformanceProfile(mode);
+            if (!result.Success)
+            {
+                Helpers.Logger.WriteLine(
+                    $"{RuntimeMode.PocBanner}: profile change failed: {result.Message}");
+                labelPerfMode.Text = "Failed";
+            }
+            RefreshPerformanceMode();
+            SetFunctionalControlsEnabled(true);
+            return;
+        }
+
         App.Mode?.SetPerformanceMode(mode);
         _currentPerfMode = mode;
         RefreshPerformanceMode();
@@ -619,12 +734,13 @@ public partial class MainWindow : Window
 
     private void UnlockGpuButtons()
     {
-        buttonEco.IsEnabled = true;
-        buttonStandard.IsEnabled = true;
+        buttonEco.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
+        buttonStandard.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
         // Only re-enable Optimized if the config flag enables it; otherwise it
         // stays disabled to match its hidden state.
-        buttonOptimized.IsEnabled = Helpers.AppConfig.IsOptimizedGpuModeEnabled();
-        buttonUltimate.IsEnabled = true;
+        buttonOptimized.IsEnabled = RuntimeMode.FilterMutationControlEnabled(
+            Helpers.AppConfig.IsOptimizedGpuModeEnabled());
+        buttonUltimate.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
     }
 
     /// <summary>
@@ -634,6 +750,12 @@ public partial class MainWindow : Window
     /// </summary>
     private void RequestGpuModeSwitch(GpuMode target, string switchingText)
     {
+        if (!RuntimeMode.TryAllowMutation($"GPU mode button {target}"))
+        {
+            EnforcePocGpuMutationControlsDisabled();
+            return;
+        }
+
         var gpu = App.GpuModeCtrl;
         if (gpu == null)
             return;
@@ -1300,16 +1422,32 @@ public partial class MainWindow : Window
     }
 
     private void ButtonEco_Click(object? sender, RoutedEventArgs e)
-        => RequestGpuModeSwitch(GpuMode.Eco, Labels.Get("gpu_switching_eco"));
+    {
+        if (!RuntimeMode.TryAllowMutation("GPU Eco click"))
+            return;
+        RequestGpuModeSwitch(GpuMode.Eco, Labels.Get("gpu_switching_eco"));
+    }
 
     private void ButtonStandard_Click(object? sender, RoutedEventArgs e)
-        => RequestGpuModeSwitch(GpuMode.Standard, Labels.Get("gpu_switching_standard"));
+    {
+        if (!RuntimeMode.TryAllowMutation("GPU Standard click"))
+            return;
+        RequestGpuModeSwitch(GpuMode.Standard, Labels.Get("gpu_switching_standard"));
+    }
 
     private void ButtonOptimized_Click(object? sender, RoutedEventArgs e)
-        => RequestGpuModeSwitch(GpuMode.Optimized, Labels.Get("gpu_switching_generic"));
+    {
+        if (!RuntimeMode.TryAllowMutation("GPU Optimized click"))
+            return;
+        RequestGpuModeSwitch(GpuMode.Optimized, Labels.Get("gpu_switching_generic"));
+    }
 
     private void ButtonUltimate_Click(object? sender, RoutedEventArgs e)
-        => RequestGpuModeSwitch(GpuMode.Ultimate, Labels.Get("gpu_switching_ultimate"));
+    {
+        if (!RuntimeMode.TryAllowMutation("GPU Ultimate click"))
+            return;
+        RequestGpuModeSwitch(GpuMode.Ultimate, Labels.Get("gpu_switching_ultimate"));
+    }
 
     // Screen
 
@@ -1328,6 +1466,11 @@ public partial class MainWindow : Window
         {
             labelScreen.Text = Labels.Format(isAuto ? "screen_prefix_auto" : "screen_prefix", hz);
             labelScreenHz.Text = $"{hz} Hz";
+        }
+        else if (RuntimeMode.IsPocReadOnly)
+        {
+            labelScreen.Text = "Laptop Screen: status unavailable";
+            labelScreenHz.Text = "--";
         }
 
         // Update max refresh button label
@@ -1411,6 +1554,12 @@ public partial class MainWindow : Window
                 _ => Labels.Format("backlight_level", brightness)
             };
             labelBacklight.Text = Labels.Format("backlight_prefix", level);
+        }
+
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            panelAura.IsVisible = false;
+            return;
         }
 
         InitAura();
@@ -1824,6 +1973,12 @@ public partial class MainWindow : Window
     /// </summary>
     public void RefreshAnimeMatrix()
     {
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            panelAnimeMatrix.IsVisible = false;
+            return;
+        }
+
         bool devMode = Helpers.AppConfig.Is("show_anime_matrix_dev");
         bool hasDevice = App.AnimeMatrix?.IsValid == true;
         bool show = devMode || hasDevice || Helpers.AppConfig.IsAnimeMatrix() || Helpers.AppConfig.IsSlash();
@@ -2138,6 +2293,12 @@ public partial class MainWindow : Window
     /// </summary>
     public void RefreshAudioToggle()
     {
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            panelAudio.IsVisible = false;
+            return;
+        }
+
         bool audioVisible = !Helpers.AppConfig.Is("disable_audio");
         bool changed = panelAudio.IsVisible != audioVisible;
         panelAudio.IsVisible = audioVisible;
@@ -2165,6 +2326,12 @@ public partial class MainWindow : Window
     /// <summary>Show the Ally panel + prime its labels when on RC71L/RC72L.</summary>
     public void RefreshAllyPanel()
     {
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            panelAlly.IsVisible = false;
+            return;
+        }
+
         bool isAlly = Helpers.AppConfig.IsAlly();
         panelAlly.IsVisible = isAlly || Helpers.AppConfig.Is("show_ally_dev");
 
@@ -2260,6 +2427,7 @@ public partial class MainWindow : Window
     /// </summary>
     private string? _xgmConnectedSnapshot;
     private string? _xgmEnabledSnapshot;
+    private string? _xgmPciSnapshot;
 
     /// <summary>True while a toggle is in flight (15 s settle window).</summary>
     private bool _xgmToggling;
@@ -2276,6 +2444,12 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshXgMobile()
     {
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            EnforcePocGpuMutationControlsDisabled();
+            return;
+        }
+
         // egpu_connected: 1 = dock attached, 0 = standalone, missing = no XGM
         // path present at all.
         var connectedPath = SysfsHelper.ResolveAttrPath(
@@ -2290,17 +2464,18 @@ public partial class MainWindow : Window
         if (!connected)
         {
             _xgmEnabledSnapshot = null;
+            _xgmPciSnapshot = null;
             // Make sure we don't leave the GPU mode buttons disabled if the
             // dock was yanked while it was active - re-enable them so the
             // user can switch back to a normal laptop GPU mode.
             if (buttonEco != null)
-                buttonEco.IsEnabled = true;
+                buttonEco.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
             if (buttonStandard != null)
-                buttonStandard.IsEnabled = true;
+                buttonStandard.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
             if (buttonUltimate != null)
-                buttonUltimate.IsEnabled = true;
+                buttonUltimate.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
             if (buttonOptimized != null)
-                buttonOptimized.IsEnabled = true;
+                buttonOptimized.IsEnabled = RuntimeMode.FilterMutationControlEnabled(true);
             return;
         }
 
@@ -2311,7 +2486,11 @@ public partial class MainWindow : Window
             ? SysfsHelper.ReadAttribute(enablePath)?.Trim()
             : null;
         _xgmEnabledSnapshot = enabledRaw;
-        bool enabled = !string.IsNullOrEmpty(enabledRaw) && enabledRaw != "0";
+        string pciSignature = GetNvidiaDisplayPciSignature();
+        _xgmPciSnapshot = pciSignature;
+        bool enabled = !string.IsNullOrEmpty(enabledRaw)
+            && enabledRaw != "0"
+            && pciSignature.Length > 0;
 
         labelXGM.Text = _xgmToggling
             ? Labels.Get("xgm_locking")
@@ -2332,17 +2511,18 @@ public partial class MainWindow : Window
         {
             blockedByEco = true;
         }
-        buttonXGM.IsEnabled = !_xgmToggling && !blockedByEco;
+        buttonXGM.IsEnabled = RuntimeMode.FilterMutationControlEnabled(
+            !_xgmToggling && !blockedByEco);
 
         bool gpuModeButtonsEnabled = !enabled && !_xgmToggling;
         if (buttonEco != null)
-            buttonEco.IsEnabled = gpuModeButtonsEnabled;
+            buttonEco.IsEnabled = RuntimeMode.FilterMutationControlEnabled(gpuModeButtonsEnabled);
         if (buttonStandard != null)
-            buttonStandard.IsEnabled = gpuModeButtonsEnabled;
+            buttonStandard.IsEnabled = RuntimeMode.FilterMutationControlEnabled(gpuModeButtonsEnabled);
         if (buttonUltimate != null)
-            buttonUltimate.IsEnabled = gpuModeButtonsEnabled;
+            buttonUltimate.IsEnabled = RuntimeMode.FilterMutationControlEnabled(gpuModeButtonsEnabled);
         if (buttonOptimized != null)
-            buttonOptimized.IsEnabled = gpuModeButtonsEnabled;
+            buttonOptimized.IsEnabled = RuntimeMode.FilterMutationControlEnabled(gpuModeButtonsEnabled);
 
         // Tooltip mirrors Windows g-helper:
         //   active   -> "Click to disable"
@@ -2363,8 +2543,14 @@ public partial class MainWindow : Window
     /// </summary>
     private void PollXgmIfChanged()
     {
-        // Skip the poll while a toggle is in flight - the click handler
-        // owns the UI state during the 15 s settle window.
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            EnforcePocGpuMutationControlsDisabled();
+            return;
+        }
+
+        // Skip the poll while a toggle is in flight - the click handler owns
+        // the UI until firmware and the PCI endpoint both reach the target.
         if (_xgmToggling)
             return;
 
@@ -2377,18 +2563,23 @@ public partial class MainWindow : Window
                 : null;
 
             string? enabled = null;
+            string? pciSignature = null;
             if (connected == "1")
             {
                 var enablePath = SysfsHelper.ResolveAttrPath(
                     Platform.Linux.AsusAttributes.EgpuEnable);
                 if (enablePath != null)
                     enabled = SysfsHelper.ReadAttribute(enablePath)?.Trim();
+                pciSignature = GetNvidiaDisplayPciSignature();
             }
 
-            if (connected != _xgmConnectedSnapshot || enabled != _xgmEnabledSnapshot)
+            if (connected != _xgmConnectedSnapshot
+                || enabled != _xgmEnabledSnapshot
+                || pciSignature != _xgmPciSnapshot)
             {
                 Helpers.Logger.WriteLine(
-                    $"XGMobile: poll detected change connected={_xgmConnectedSnapshot}->{connected} enabled={_xgmEnabledSnapshot}->{enabled}");
+                    $"XGMobile: poll detected change connected={_xgmConnectedSnapshot}->{connected}"
+                    + $" enabled={_xgmEnabledSnapshot}->{enabled} pci={_xgmPciSnapshot}->{pciSignature}");
                 RefreshXgMobile();
             }
         }
@@ -2400,6 +2591,12 @@ public partial class MainWindow : Window
 
     private async void ButtonXGM_Click(object? sender, RoutedEventArgs e)
     {
+        if (!RuntimeMode.TryAllowMutation("XG Mobile button click"))
+        {
+            EnforcePocGpuMutationControlsDisabled();
+            return;
+        }
+
         if (_xgmToggling)
             return;
 
@@ -2413,7 +2610,10 @@ public partial class MainWindow : Window
         }
 
         var raw = SysfsHelper.ReadAttribute(enablePath)?.Trim();
-        bool currentlyEnabled = !string.IsNullOrEmpty(raw) && raw != "0";
+        string initialPciSignature = GetNvidiaDisplayPciSignature();
+        bool currentlyEnabled = !string.IsNullOrEmpty(raw)
+            && raw != "0"
+            && initialPciSignature.Length > 0;
         string targetValue = currentlyEnabled ? "0" : "1";
 
         if (currentlyEnabled)
@@ -2425,12 +2625,53 @@ public partial class MainWindow : Window
             if (!yes)
                 return;
 
-            // On disable, also restore the dock fan to firmware-default to
-            // avoid the dock spinning a fan against a powered-down rail
-            // mid-transition. Mirrors Windows g-helper's pre-disable XGM.Reset.
+            // In the functional POC the root daemon owns HID and performs the
+            // reset. Direct GUI access is intentionally unavailable.
+            if (!RuntimeMode.IsPocFunctional)
+            {
+                try
+                { USB.XGM.Reset(); }
+                catch (Exception ex) { Helpers.Logger.WriteLine($"XGM.Reset (pre-disable): {ex.Message}"); }
+            }
+        }
+
+        if (RuntimeMode.IsPocFunctional)
+        {
+            _xgmToggling = true;
+            GpuQueryGate.Hold("XG Mobile live transition");
+            RefreshXgMobile();
             try
-            { USB.XGM.Reset(); }
-            catch (Exception ex) { Helpers.Logger.WriteLine($"XGM.Reset (pre-disable): {ex.Message}"); }
+            {
+                string operation = currentlyEnabled ? "disable-xg-mode" : "enable-xg-mode";
+                using var daemon = await GHelperDaemonClient.ConnectSystemAsync();
+                await daemon.RequestMutationAsync(operation);
+                Helpers.Logger.WriteLine($"XGMobile: live transition queued ({operation})");
+                await WaitForXgmTransitionAsync(
+                    targetEnabled: !currentlyEnabled,
+                    initialPciSignature);
+                Helpers.Logger.WriteLine($"XGMobile: live transition completed ({operation})");
+                App.System?.ShowNotification(
+                    Labels.Get("xgm_label"),
+                    !currentlyEnabled
+                        ? "XG Mobile enabled. The RTX is ready."
+                        : "XG Mobile disabled. The laptop GPU is restored.",
+                    "preferences-system");
+            }
+            catch (Exception ex)
+            {
+                Helpers.Logger.WriteLine($"XGMobile live transition request failed: {ex.Message}");
+                App.System?.ShowNotification(
+                    Labels.Get("xgm_label"),
+                    $"Live XG transition failed: {ex.Message}",
+                    "dialog-warning");
+            }
+            finally
+            {
+                GpuQueryGate.Resume();
+                _xgmToggling = false;
+                RefreshXgMobile();
+            }
+            return;
         }
 
         _xgmToggling = true;
@@ -2546,6 +2787,66 @@ public partial class MainWindow : Window
 
         _xgmToggling = false;
         Avalonia.Threading.Dispatcher.UIThread.Post(RefreshXgMobile);
+    }
+
+    private async Task WaitForXgmTransitionAsync(
+        bool targetEnabled,
+        string initialPciSignature)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(45);
+        while (DateTime.UtcNow < deadline)
+        {
+            var enablePath = SysfsHelper.ResolveAttrPath(
+                Platform.Linux.AsusAttributes.EgpuEnable);
+            string? raw = enablePath != null
+                ? SysfsHelper.ReadAttribute(enablePath)?.Trim()
+                : null;
+            bool firmwareAtTarget = targetEnabled
+                ? !string.IsNullOrEmpty(raw) && raw != "0"
+                : raw == "0";
+            string pciSignature = GetNvidiaDisplayPciSignature();
+            bool endpointChanged = pciSignature != initialPciSignature;
+            bool endpointAtTarget = targetEnabled
+                ? endpointChanged && pciSignature.Length > 0
+                : endpointChanged;
+
+            RefreshXgMobile();
+            if (firmwareAtTarget && endpointAtTarget)
+            {
+                // Require one stable re-read so a transient PCI disappearance
+                // is never presented as a completed transition.
+                await Task.Delay(TimeSpan.FromSeconds(1));
+                if (GetNvidiaDisplayPciSignature() == pciSignature)
+                    return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+        }
+
+        throw new TimeoutException("XG Mobile did not reach the requested hardware state.");
+    }
+
+    private static string GetNvidiaDisplayPciSignature()
+    {
+        const string devicesPath = "/sys/bus/pci/devices";
+        var devices = new List<string>();
+        try
+        {
+            foreach (string devicePath in Directory.EnumerateDirectories(devicesPath))
+            {
+                string vendor = File.ReadAllText(Path.Combine(devicePath, "vendor")).Trim();
+                string deviceClass = File.ReadAllText(Path.Combine(devicePath, "class")).Trim();
+                if (vendor == "0x10de" && deviceClass.StartsWith("0x03", StringComparison.Ordinal))
+                {
+                    string device = File.ReadAllText(Path.Combine(devicePath, "device")).Trim();
+                    devices.Add($"{Path.GetFileName(devicePath)}:{device}");
+                }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        devices.Sort(StringComparer.Ordinal);
+        return string.Join(',', devices);
     }
 
     /// <summary>

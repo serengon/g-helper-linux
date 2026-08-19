@@ -11,9 +11,12 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        // Phase 1 is a review-only, technically non-deployable artifact.
-        // Dispatch the one safe metadata query or reject everything else
-        // before session import, configuration, native extraction, or UI.
+        // Must run before ResourceExtractorCli/AppConfig/native extraction so
+        // development modes are isolated and installed MVP state is selected.
+        RuntimeMode.Initialize(args);
+
+        // Uninstalled review artifacts remain non-deployable. Dispatch safe
+        // metadata, exact development flags, or a verified installed MVP.
         var rc = ResourceExtractorCli.TryDispatch(args);
         if (rc.HasValue)
         {
@@ -21,9 +24,25 @@ class Program
             return;
         }
 
+        if (RuntimeMode.IsPocSmoke)
+        {
+            bool ok = RuntimeMode.ValidatePocSmoke(out var state);
+            Console.Out.WriteLine(ok ? "POC_SMOKE_OK" : "POC_SMOKE_FAILED");
+            Console.Out.WriteLine($"mode={RuntimeMode.PocBanner}");
+            Console.Out.WriteLine($"model={state.Model}");
+            Console.Out.WriteLine($"bios={state.Bios}");
+            Console.Out.WriteLine($"kernel={state.Kernel}");
+            Console.Out.WriteLine($"platform_profile={state.PlatformProfile}");
+            Console.Out.WriteLine("mutations=blocked");
+            Console.Out.WriteLine("external_processes=blocked");
+            Environment.Exit(ok ? 0 : 70);
+            return;
+        }
+
         // Early-start systemd units (COSMIC autostart) may lack session vars;
         // import them from the systemd user manager before anything reads them.
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
+        if (!RuntimeMode.IsPocMode
+            && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
             Cosmic.ImportSessionEnvironment();
 
         SetGpuPreferenceEnv();

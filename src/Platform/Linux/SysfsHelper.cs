@@ -196,6 +196,12 @@ public static class SysfsHelper
     /// </summary>
     public static BackendWriteResult WriteToAllBackendsDetailed(AttrDef attr, string value, params string[] legacyBases)
     {
+        if (Helpers.RuntimeMode.IsPocFunctional)
+        {
+            var result = AsusctlControlBridge.SetArmouryAttribute(attr.FwAttrName, value);
+            return new BackendWriteResult { Legacy = result.Success, FwAttr = false };
+        }
+
         if (legacyBases.Length == 0)
             legacyBases = new[] { AsusWmiPlatform, AsusBusPlatform };
 
@@ -385,6 +391,12 @@ public static class SysfsHelper
     /// <summary>Write a string to a sysfs attribute. Returns true on success.</summary>
     public static bool WriteAttribute(string path, string value)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation($"sysfs write {path}"))
+            return false;
+
+        if (AsusctlControlBridge.TryWriteSysfs(path, value, out bool bridged))
+            return bridged;
+
         try
         {
             if (!File.Exists(path))
@@ -792,6 +804,9 @@ public static class SysfsHelper
 
     private static string? RunProcess(System.Diagnostics.ProcessStartInfo psi, string fullCommand, int timeoutMs)
     {
+        if (!Helpers.RuntimeMode.TryAllowExternalProcess(fullCommand))
+            return null;
+
         try
         {
             using var proc = System.Diagnostics.Process.Start(psi);

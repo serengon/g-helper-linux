@@ -10,6 +10,8 @@ ghelper_cache_input_files() {
         NuGet.Config \
         src/GHelper.Linux.csproj \
         src/packages.lock.json \
+        daemon/GHelper.Daemon.csproj \
+        daemon/packages.lock.json \
         tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj \
         tests/GHelper.Linux.Tests/packages.lock.json \
         audio-helper/tests/cs/TestAudioPipeline.csproj \
@@ -33,7 +35,7 @@ ghelper_cache_input_sha256() {
     ghelper_cache_input_hash "$1" | sha256sum | cut -d' ' -f1
 }
 
-# Emit the exact package-id/version closure described by all three lock files.
+# Emit the exact package-id/version closure described by every project lock.
 # The three implicit runtime packs are selected at the exact ILCompiler version
 # resolved by the main lock file. Python is used only as a strict JSON parser.
 ghelper_nuget_closure() {
@@ -47,6 +49,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 locks = [
     root / "src/packages.lock.json",
+    root / "daemon/packages.lock.json",
     root / "tests/GHelper.Linux.Tests/packages.lock.json",
     root / "audio-helper/tests/cs/packages.lock.json",
 ]

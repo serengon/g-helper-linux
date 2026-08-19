@@ -216,7 +216,7 @@ if [[ "$PRINT_IMAGE" == "1" ]]; then
 fi
 
 # Cache identity is separate from image identity and covers the complete
-# project/props/global.json/three-lock-file closure.
+# project/props/global.json/four-lock-file closure.
 # shellcheck source=cache-manifest.sh
 source "$REPO_DIR/scripts/cache-manifest.sh"
 CACHE_INPUT_HASH="$(ghelper_cache_input_sha256 "$REPO_DIR")"
@@ -283,6 +283,7 @@ else
         --workdir /work \
         "$IMAGE_ID" bash -ceu '
             dotnet restore src/GHelper.Linux.csproj --runtime linux-x64 --locked-mode
+            dotnet restore daemon/GHelper.Daemon.csproj --runtime linux-x64 --locked-mode
             dotnet restore tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj --locked-mode
             dotnet restore audio-helper/tests/cs/TestAudioPipeline.csproj --locked-mode
         '

@@ -291,13 +291,9 @@ public class LinuxAsusWmi : IHardwareControl
         // nvidia-smi returns percentage, we return -2 to indicate "percentage mode"
         if (fanIndex == 1 && Directory.Exists("/sys/module/nvidia"))
         {
-            try
-            {
-                var output = SysfsHelper.RunCommand("nvidia-smi", "--query-gpu=fan.speed --format=csv,noheader,nounits");
-                if (!string.IsNullOrWhiteSpace(output) && int.TryParse(output.Trim(), out int fanPercent) && fanPercent >= 0)
-                    return -2 - fanPercent; // Encode: -2 means "percentage", value is -(2 + percent)
-            }
-            catch { /* nvidia-smi not available */ }
+            int? fanPercent = Gpu.NVidia.LinuxNvidiaGpuControl.GetFanPercentViaSmi();
+            if (fanPercent >= 0)
+                return -2 - fanPercent.Value; // Encode: -2 means "percentage", value is -(2 + percent)
         }
 
         return -1;
@@ -311,14 +307,7 @@ public class LinuxAsusWmi : IHardwareControl
     {
         if (!Directory.Exists("/sys/module/nvidia"))
             return null;
-        try
-        {
-            var output = SysfsHelper.RunCommand("nvidia-smi", "--query-gpu=fan.speed --format=csv,noheader,nounits");
-            if (!string.IsNullOrWhiteSpace(output) && int.TryParse(output.Trim(), out int fanPercent) && fanPercent >= 0)
-                return fanPercent;
-        }
-        catch { }
-        return null;
+        return Gpu.NVidia.LinuxNvidiaGpuControl.GetFanPercentViaSmi();
     }
 
     public byte[]? GetFanCurve(int fanIndex)
@@ -379,6 +368,15 @@ public class LinuxAsusWmi : IHardwareControl
         if (_asusFanCurveHwmonDir == null || curve.Length != 16)
             return;
 
+        if (Helpers.RuntimeMode.IsPocFunctional)
+        {
+            var result = AsusctlControlBridge.SetFanCurve(
+                GetThrottleThermalPolicy(), fanIndex, curve);
+            if (!result.Success)
+                Helpers.Logger.WriteLine($"POC fan curve apply failed: {result.Message}");
+            return;
+        }
+
         int pwmIndex = fanIndex + 1;
 
         // Write all curve data points FIRST.
@@ -406,6 +404,14 @@ public class LinuxAsusWmi : IHardwareControl
     {
         if (_asusFanCurveHwmonDir == null)
             return;
+        if (Helpers.RuntimeMode.IsPocFunctional)
+        {
+            var result = AsusctlControlBridge.SetFanCurveEnabled(
+                GetThrottleThermalPolicy(), fanIndex, enabled: false);
+            if (!result.Success)
+                Helpers.Logger.WriteLine($"POC fan curve disable failed: {result.Message}");
+            return;
+        }
         int pwmIndex = fanIndex + 1;
 
         // pwm_enable=2 disables the custom curve for this fan, returning to
@@ -418,6 +424,13 @@ public class LinuxAsusWmi : IHardwareControl
     {
         if (_asusFanCurveHwmonDir == null)
             return null;
+        if (Helpers.RuntimeMode.IsPocFunctional)
+        {
+            var result = AsusctlControlBridge.ResetFanCurves();
+            if (!result.Success)
+                Helpers.Logger.WriteLine($"POC fan curve reset failed: {result.Message}");
+            return GetFanCurve(fanIndex);
+        }
         int pwmIndex = fanIndex + 1;
 
         // pwm_enable=3 resets the fan curve to BIOS factory defaults for the
@@ -441,6 +454,10 @@ public class LinuxAsusWmi : IHardwareControl
     public void EnsureManualFanMode()
     {
         if (_asusFanCurveHwmonDir == null)
+            return;
+        // asusd owns fan-curve activation in the functional POC. Individual
+        // curves are enabled atomically by SetFanCurve above.
+        if (Helpers.RuntimeMode.IsPocFunctional)
             return;
 
         // Write pwm_enable=1 for each fan to set FANM=4 in the EC.

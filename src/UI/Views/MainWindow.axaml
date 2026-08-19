@@ -53,6 +53,28 @@
 
         <StackPanel Margin="11,8,11,8" Spacing="0">
 
+            <Border x:Name="pocReadOnlyBanner"
+                    IsVisible="False"
+                    Background="#6B4F00"
+                    BorderBrush="#FFC857"
+                    BorderThickness="1"
+                    CornerRadius="5"
+                    Padding="10,7"
+                    Margin="3,0,3,7">
+                <StackPanel>
+                    <TextBlock x:Name="pocBannerTitle" Text="POC READ-ONLY"
+                               Foreground="#FFF3C4"
+                               FontWeight="Bold"
+                               FontSize="15"
+                               HorizontalAlignment="Center" />
+                    <TextBlock x:Name="pocBannerDetails" Text="Live hardware status. Controls, autostart, updates and services are disabled."
+                               Foreground="#FFF3C4"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
+
             <!-- PERFORMANCE SECTION -->
             <Border Classes="panel">
                 <StackPanel>

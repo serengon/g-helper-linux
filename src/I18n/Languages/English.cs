@@ -204,7 +204,7 @@ public static class English
         ["auto_screen_ac"] = "Auto: {0}Hz, overdrive on",
         ["auto_screen_battery"] = "Auto: 60Hz, overdrive off",
         ["setup_required"] = "Setup Required",
-        ["udev_not_installed"] = "Hardened hardware access is unavailable; the hardened installer is still under development.",
+        ["udev_not_installed"] = "G-Helper XG Mobile MVP is not installed, or this invocation is unsupported.",
 
         // SYSTEM TRAY
         ["tray_tooltip_cpu"] = "CPU: {0}",

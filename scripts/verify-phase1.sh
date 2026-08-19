@@ -104,6 +104,8 @@ assert_no_ignored_build_outputs() {
         dist/ghelper \
         src/bin \
         src/obj \
+        daemon/bin \
+        daemon/obj \
         tests/GHelper.Linux.Tests/bin \
         tests/GHelper.Linux.Tests/obj \
         audio-helper/tests/cs/bin \
@@ -282,11 +284,12 @@ rg -q 'ghelper-phase1-wrapper-v1:' build.sh scripts/build-container.sh \
     || fail "context read-only validation accepts substring/parent-mount spoofing"
 rg -q 'private_nuget:/nuget:ro' scripts/build-container.sh \
     || fail "artifact build does not mount a private read-only NuGet snapshot"
-[[ "$(ghelper_cache_input_files | grep -c 'packages\.lock\.json$')" == "3" ]] \
-    || fail "cache identity does not cover exactly three package lock files"
+[[ "$(ghelper_cache_input_files | grep -c 'packages\.lock\.json$')" == "4" ]] \
+    || fail "cache identity does not cover exactly four package lock files"
 for cache_input in \
     global.json Directory.Build.props NuGet.Config \
     src/GHelper.Linux.csproj src/packages.lock.json \
+    daemon/GHelper.Daemon.csproj daemon/packages.lock.json \
     tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj \
     tests/GHelper.Linux.Tests/packages.lock.json \
     audio-helper/tests/cs/TestAudioPipeline.csproj \
@@ -1078,12 +1081,26 @@ find -P "$forged_direct" -depth -delete
 "${container[@]}" "$image_id" dotnet restore \
     tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj --locked-mode
 "${container[@]}" "$image_id" dotnet restore \
+    daemon/GHelper.Daemon.csproj --runtime linux-x64 --locked-mode
+set +e
+"${container[@]}" "$image_id" dotnet publish daemon/GHelper.Daemon.csproj \
+    -c Release --no-restore >"$WORK_DIR/direct-daemon-release.log" 2>&1
+direct_daemon_release_rc=$?
+set -e
+[[ "$direct_daemon_release_rc" != "0" ]] \
+    || fail "direct UNATTESTED ghelperd Release publish unexpectedly succeeded"
+grep -Fq 'UNATTESTED ghelperd Release publishing is disabled' \
+    "$WORK_DIR/direct-daemon-release.log" \
+    || fail "direct ghelperd Release refusal is not explicit"
+"${container[@]}" "$image_id" dotnet build daemon/GHelper.Daemon.csproj \
+    -c Debug --no-restore
+"${container[@]}" "$image_id" dotnet restore \
     audio-helper/tests/cs/TestAudioPipeline.csproj --locked-mode
 "${container[@]}" "$image_id" dotnet run \
     --project tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj \
     -c Debug --no-restore 2>&1 | tee "$WORK_DIR/csharp.log"
-grep -Fq 'Total:  123' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
-grep -Fq 'Passed: 123' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
+grep -Fq 'Total:  144' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
+grep -Fq 'Passed: 144' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 grep -Fq 'Failed: 0' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 for security_test in \
     AtomicPayload_StaleCacheIsReplaced \
@@ -1100,7 +1117,28 @@ for security_test in \
     UserPaths_TraversalAndSeparatorsAreRejected \
     MetadataCli_UnstampedAssemblyReturns70 \
     MetadataCli_MalformedArityReturns64 \
-    MetadataCli_IncoherentLocalProvenanceIsRejected; do
+    MetadataCli_IncoherentLocalProvenanceIsRejected \
+    Contract_IsVersionedAndIntrospectable \
+    Contract_HasNoSpoofableCallerParameters \
+    Capabilities_AdvertiseOnlyImplementedMutationAndAreDefensive \
+    UnknownMutation_FailsBeforeIdentityLookup \
+    KnownMutations_FailClosedBeforeBusCalls \
+    GranularAuthorization_UsesMappedActionAndResolvedCaller \
+    AuthorizedMutation_StillHasNoExecutor \
+    AuthorizedXgMutation_IsQueuedAfterPolkit \
+    InvalidSender_FailsBeforeIdentityLookupWhenEnabled \
+    FutureMutationPipeline_IsBounded \
+    BoundedTransport_RetainsSlotUntilCancelledCallCompletes \
+    Resolver_ExercisesRealValidationAndTransport \
+    Resolver_TimeoutLeavesUnderlyingCallBounded \
+    Polkit_CancelsWithUniqueIdsOnCancelAndTimeout \
+    Polkit_SaturationFailsClosed \
+    Polkit_CancelFailureAbortsDedicatedTransport \
+    Handler_UsesStablePublicErrors \
+    Client_ExposesConnectionOwnership \
+    StartupContract_NeverReplacesOrQueues \
+    ExactFlags_AreClassifiedAndMalformedFlagsAreRefused \
+    PocMode_BlocksCriticalMutationEntrypoints; do
     grep -Fq "PASS  $security_test" "$WORK_DIR/csharp.log" \
         || fail "missing security regression: $security_test"
 done

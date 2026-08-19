@@ -1,4 +1,5 @@
 using System.Text;
+using HidSharp;
 
 namespace GHelper.Linux.USB;
 
@@ -41,6 +42,8 @@ public static class XGM
     /// <summary>HID report id for all XG Mobile feature reports.</summary>
     public const byte XGM_REPORT_ID = 0x5E;
 
+    private const int ASUS_ID = 0x0B05;
+
     /// <summary>The XG Mobile feature report length (matches Windows g-helper filter).</summary>
     public const int XGM_REPORT_LEN = 300;
 
@@ -59,20 +62,35 @@ public static class XGM
     public static readonly int[] XGM_PIDS = { 0x1970, 0x1A9A, 0x1C28, 0x1C29, 0x1BC1 };
 
     /// <summary>
+    /// Exact upstream device selection: the XG Mobile interface must be an
+    /// ASUS device with a known product id, be openable, and expose a feature
+    /// report of at least 300 bytes. Do not reuse the generic AURA discovery:
+    /// an XG dock exposes sibling HID interfaces and the 0x5D AURA interface is
+    /// not necessarily the 0x5E/300-byte XGM interface.
+    /// </summary>
+    public static HidDevice? GetDevice()
+    {
+        try
+        {
+            return DeviceList.Local.GetHidDevices(ASUS_ID).FirstOrDefault(device =>
+                XGM_PIDS.Contains(device.ProductID)
+                && device.CanOpen
+                && device.GetMaxFeatureReportLength() >= XGM_REPORT_LEN);
+        }
+        catch (Exception ex)
+        {
+            Helpers.Logger.WriteLine($"Error getting XGM device: {ex}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Whether an XG Mobile dock is currently visible on USB-HID. Independent
     /// of the laptop-side <c>egpu_connected</c> firmware bit.
     /// </summary>
     public static bool IsConnected()
     {
-        try
-        {
-            return HidrawHelper.GetFirstPathForPids(XGM_PIDS) != null;
-        }
-        catch (Exception ex)
-        {
-            Helpers.Logger.WriteLine($"XGM.IsConnected: {ex.Message}");
-            return false;
-        }
+        return GetDevice() is not null;
     }
 
     // Kernel LED-class fallback. asus-wmi exposes the dock's ring as
@@ -147,9 +165,7 @@ public static class XGM
     /// </summary>
     public static string? GetDevicePath()
     {
-        try
-        { return HidrawHelper.GetFirstPathForPids(XGM_PIDS); }
-        catch { return null; }
+        return GetDevice()?.DevicePath;
     }
 
     /// <summary>
@@ -159,23 +175,28 @@ public static class XGM
     /// All exceptions are swallowed and logged - the UI never throws up due
     /// to a chatty dock.
     /// </summary>
-    public static bool Write(byte[] payload, string? log = null)
+    public static bool Write(byte[] data, string? log = null)
     {
+        if (!XgmMutationGate.Allow("write"))
+            return false;
+
         try
         {
-            // The packet on the wire starts with the report id followed by
-            // the payload bytes. HidrawHelper.WriteToFdSized will pad to
-            // XGM_REPORT_LEN with zeros.
-            var packet = new byte[payload.Length + 1];
-            packet[0] = XGM_REPORT_ID;
-            Array.Copy(payload, 0, packet, 1, payload.Length);
+            HidDevice? device = GetDevice();
+            if (device is null)
+            {
+                Helpers.Logger.WriteLine("XGM SUB device not found");
+                return false;
+            }
 
-            return HidrawHelper.WriteAllForPids(
-                XGM_REPORT_ID,
-                packet,
-                XGM_PIDS,
-                XGM_REPORT_LEN,
-                log ?? "XGM");
+            using HidStream hidStream = device.Open();
+            byte[] payload = new byte[XGM_REPORT_LEN];
+            data.CopyTo(payload, 0);
+            hidStream.SetFeature(payload);
+            Helpers.Logger.WriteLine(
+                $"XGM-{device.ProductID}|{device.GetMaxFeatureReportLength()}:" +
+                BitConverter.ToString(data));
+            return true;
         }
         catch (Exception ex)
         {
@@ -214,14 +235,14 @@ public static class XGM
         if (!IsConnected())
             return false;
 
-        // ASCII "^ASUS Tech.Inc." - 15 bytes including the leading caret.
-        // Bytes after the auth string remain zero-padded.
+        // Upstream sends the buffer verbatim. The leading '^' is byte 0x5E,
+        // therefore it is already the HID report id and must not be prepended.
         var auth = Encoding.ASCII.GetBytes("^ASUS Tech.Inc.");
         Helpers.Logger.WriteLine("XGM: sending init handshake (^ASUS Tech.Inc.)");
         bool ok = Write(auth, "XGM:Init");
 
-        // 0xE6 follows the handshake; some docks ignore LED state without it.
-        Write(new byte[] { 0xE6 }, "XGM:Init:E6");
+        // Exact current upstream wake packet (seerge/g-helper 682f87f2).
+        Write(new byte[] { XGM_REPORT_ID, 0xE4, 0x02 }, "XGM:Init:E4:02");
 
         // Match Windows: restore the LED on/off state immediately after the
         // handshake. Brightness is restored separately by InitLight() at
@@ -250,8 +271,8 @@ public static class XGM
     {
         if (IsConnected())
         {
-            bool ok1 = Write(new byte[] { 0xC5, on ? (byte)0x50 : (byte)0x00 }, "XGM:Light:profile");
-            bool ok2 = Write(new byte[] { 0xBD, 0x00, on ? (byte)0x01 : (byte)0x00 }, "XGM:Light:onoff");
+            bool ok1 = Write(new byte[] { XGM_REPORT_ID, 0xC5, on ? (byte)0x50 : (byte)0x00 }, "XGM:Light:profile");
+            bool ok2 = Write(new byte[] { XGM_REPORT_ID, 0xBD, 0x00, on ? (byte)0x01 : (byte)0x00 }, "XGM:Light:onoff");
             Helpers.Logger.WriteLine($"XGM.Light({on}): profile={ok1} onoff={ok2}");
             if (ok1 && ok2)
                 return true;
@@ -270,7 +291,7 @@ public static class XGM
         if (!IsConnected())
             return false;
 
-        return Write(new byte[] { 0xBA, 0xC5, 0xC4, level }, "XGM:LightBrightness");
+        return Write(new byte[] { XGM_REPORT_ID, 0xBA, 0xC5, 0xC4, level }, "XGM:LightBrightness");
     }
 
     /// <summary>
@@ -290,15 +311,9 @@ public static class XGM
         Array.Copy(auraPacket, copy, auraPacket.Length);
         copy[0] = XGM_REPORT_ID;
 
-        // The original aura packet already includes a report id at index 0;
-        // Write() will prepend XGM_REPORT_ID again, so we strip the leading
-        // byte before delegating.
-        var payload = new byte[copy.Length - 1];
-        Array.Copy(copy, 1, payload, 0, payload.Length);
-
-        bool ok1 = Write(payload, "XGM:LightMode:packet");
-        bool ok2 = Write(new byte[] { 0xB4 }, "XGM:LightMode:commit1");
-        bool ok3 = Write(new byte[] { 0xB5 }, "XGM:LightMode:commit2");
+        bool ok1 = Write(copy, "XGM:LightMode:packet");
+        bool ok2 = Write(new byte[] { XGM_REPORT_ID, 0xB4 }, "XGM:LightMode:commit1");
+        bool ok3 = Write(new byte[] { XGM_REPORT_ID, 0xB5 }, "XGM:LightMode:commit2");
         return ok1 && ok2 && ok3;
     }
 
@@ -334,11 +349,14 @@ public static class XGM
     /// </summary>
     public static bool Reset()
     {
+        if (!XgmMutationGate.Allow("reset"))
+            return false;
+
         if (!IsConnected())
             return false;
 
         Helpers.Logger.WriteLine("XGM.Reset: restoring default fan curve");
-        return Write(new byte[] { 0xD1, 0x02 }, "XGM:Reset");
+        return Write(new byte[] { XGM_REPORT_ID, 0xD1, 0x02 }, "XGM:Reset");
     }
 
     /// <summary>
@@ -361,14 +379,19 @@ public static class XGM
             return false;
         }
 
-        // Payload (without report id): [D1 01 <curve16>] = 18 bytes.
-        // Write() prepends the 0x5E report id giving the 19-byte packet
-        // [5E D1 01 <curve16>] that Windows g-helper sends.
-        var packet = new byte[2 + curve16.Length];
-        packet[0] = 0xD1;
-        packet[1] = 0x01;
-        Array.Copy(curve16, 0, packet, 2, curve16.Length);
+        var packet = new byte[3 + curve16.Length];
+        packet[0] = XGM_REPORT_ID;
+        packet[1] = 0xD1;
+        packet[2] = 0x01;
+        Array.Copy(curve16, 0, packet, 3, curve16.Length);
         return Write(packet, "XGM:SetFan");
+    }
+
+    /// <summary>Exact upstream dock shutdown notification.</summary>
+    public static bool NotifyShutdown()
+    {
+        return IsConnected()
+            && Write(new byte[] { XGM_REPORT_ID, 0xE4, 0x01 }, "XGM:Shutdown");
     }
 
     /// <summary>

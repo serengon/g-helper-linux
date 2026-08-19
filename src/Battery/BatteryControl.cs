@@ -24,6 +24,9 @@ public static class BatteryControl
     /// <summary>Toggle between "charge to saved limit" and "charge to 100%".</summary>
     public static void ToggleBatteryLimitFull()
     {
+        if (!RuntimeMode.TryAllowMutation("battery full-charge toggle"))
+            return;
+
         if (ChargeFull)
         {
             ChargeFull = false;
@@ -38,6 +41,9 @@ public static class BatteryControl
     /// <summary>Temporarily override charge limit to 100%.</summary>
     public static void SetBatteryLimitFull()
     {
+        if (!RuntimeMode.TryAllowMutation("battery full-charge override"))
+            return;
+
         ChargeFull = true;
         App.Wmi?.SetBatteryChargeLimit(100);
         Logger.WriteLine("BatteryControl: charge limit temporarily set to 100% (charge_full)");
@@ -46,6 +52,9 @@ public static class BatteryControl
     /// <summary>Clear the full-charge flag. Called when battery reaches 100%.</summary>
     public static void UnSetBatteryLimitFull()
     {
+        if (!RuntimeMode.TryAllowMutation("battery full-charge flag clear"))
+            return;
+
         ChargeFull = false;
         Logger.WriteLine("BatteryControl: charge_full cleared - battery fully charged");
     }
@@ -56,6 +65,9 @@ public static class BatteryControl
     /// </summary>
     public static void AutoBattery(bool init = false)
     {
+        if (!RuntimeMode.TryAllowMutation("battery startup auto-apply"))
+            return;
+
         if (ChargeFull && !init)
         {
             SetBatteryLimitFull();
@@ -77,6 +89,22 @@ public static class BatteryControl
     /// <returns>The actual limit applied (firmware may clamp).</returns>
     public static int SetBatteryChargeLimit(int limit = -1)
     {
+        if (RuntimeMode.IsPocFunctional)
+        {
+            if (limit < 0)
+                limit = App.Wmi?.GetBatteryChargeLimit() ?? 80;
+            var result = Platform.Linux.AsusctlControlBridge.SetBatteryLimit(limit);
+            if (!result.Success)
+            {
+                Logger.WriteLine($"{RuntimeMode.PocBanner}: battery limit failed: {result.Message}");
+                return App.Wmi?.GetBatteryChargeLimit() ?? limit;
+            }
+            return App.Wmi?.GetBatteryChargeLimit() ?? limit;
+        }
+
+        if (!RuntimeMode.TryAllowMutation("battery charge limit"))
+            return App.Wmi?.GetBatteryChargeLimit() ?? GetSavedChargeLimit();
+
         if (limit < 0)
             limit = AppConfig.Get(KeyChargeLimit, 100);
 

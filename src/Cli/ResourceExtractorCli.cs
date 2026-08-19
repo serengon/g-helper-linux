@@ -6,9 +6,8 @@ using System.Text.RegularExpressions;
 namespace GHelper.Linux.Cli;
 
 /// <summary>
-/// Phase 1 dispatcher. The review artifact is intentionally non-deployable:
-/// only the exact metadata query may succeed and every other invocation is
-/// refused before application/runtime initialization.
+/// Early dispatcher. Uninstalled review artifacts remain non-deployable;
+/// exact development modes and an installed XG Mobile MVP may reach runtime.
 /// </summary>
 public static class ResourceExtractorCli
 {
@@ -18,6 +17,11 @@ public static class ResourceExtractorCli
     /// </summary>
     public static int? TryDispatch(string[] args)
     {
+        // Program configured RuntimeMode before entering this dispatcher. Only
+        // an exact development or installed-MVP invocation may initialize.
+        if (Helpers.RuntimeMode.IsConfiguredRuntimeInvocation(args))
+            return null;
+
         if (args.Length == 1 && args[0] == "--print-build-metadata")
         {
             if (!TryGetLocalReproducibleMetadata(out string value))

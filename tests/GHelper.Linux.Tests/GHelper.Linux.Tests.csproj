@@ -35,6 +35,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!--
       Only compile the C# files we strictly need. Avoids dragging in
       Avalonia UI, Skia, HID, etc. Keeps the test build fast and
@@ -54,6 +58,7 @@
     <Compile Include="../../src/Platform/Linux/Asus/AsusAttributes.cs" />
     <Compile Include="../../src/Platform/Linux/Asus/AsusAttributeRange.cs" />
     <Compile Include="../../src/Platform/Linux/SysfsHelper.cs" />
+    <Compile Include="../../src/Platform/Linux/AsusctlControlBridge.cs" />
     <!-- NixOS (gpu-helper resolve) + RyzenPower (PPT); SysfsHelper-only helpers -->
     <Compile Include="../../src/Platform/Linux/NixOS.cs" />
     <Compile Include="../../src/Platform/Linux/RyzenPower.cs" />
@@ -69,9 +74,19 @@
     <Compile Include="../../src/Helpers/AppConfig.cs" />
     <Compile Include="../../src/Helpers/AbsoluteUserPaths.cs" />
     <Compile Include="../../src/Helpers/Logger.cs" />
+    <Compile Include="../../src/Helpers/RuntimeMode.cs" />
+    <Compile Include="../../src/USB/XgmMutationGate.cs" />
     <Compile Include="../../src/Helpers/MemoryHelper.cs" />
     <Compile Include="../../src/Helpers/AtomicPayloadInstaller.cs" />
     <Compile Include="../../src/Cli/ResourceExtractorCli.cs" />
+    <Compile Include="../../daemon/Contract/DaemonContract.cs" />
+    <Compile Include="../../daemon/Core/DaemonCore.cs" />
+    <Compile Include="../../daemon/Dbus/BoundedCallRunner.cs" />
+    <Compile Include="../../daemon/Dbus/DaemonMethodHandler.cs" />
+    <Compile Include="../../daemon/Dbus/DbusCallerIdentityResolver.cs" />
+    <Compile Include="../../daemon/Dbus/PolkitAuthorizationService.cs" />
+    <Compile Include="../../daemon/Hosting/DaemonStartupContract.cs" />
+    <Compile Include="../../src/Daemon/GHelperDaemonClient.cs" />
     <!-- Labels.Get() in LinuxNvidiaGpuControl; pulls all language tables -->
     <Compile Include="../../src/I18n/**/*.cs" />
   </ItemGroup>

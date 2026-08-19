@@ -114,6 +114,8 @@ public static class Scenarios
         Gate_Extend_DoesNotClearHold();
 
         SecurityScenarios.RunAll();
+        DaemonScenarios.RunAll();
+        PocReadOnlyScenarios.RunAll();
     }
 
     // 

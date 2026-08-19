@@ -211,24 +211,28 @@ lsmod | grep asus
 
 ---
 
-## X13 hardened build status
+## X13 XG Mobile MVP status
 
-> **Do not install or launch this branch on a laptop yet.** Phase 1 only
-> establishes a reproducible source/build baseline. Its binary is technically
-> non-deployable: a normal launch and every runtime/helper command exit with
-> code 64 before Avalonia, configuration, autostart, or native payload code can
-> initialize. The only accepted invocation is the exact, side-effect-free
-> `ghelper --print-build-metadata` query. Upstream udev and all other `install/`
-> files are non-executable quarantined inputs and must not be copied to a host.
+The GV301QH MVP can switch the tested RTX 3080 XG Mobile in both directions
+without restarting GNOME. A normal launch is accepted only after the MVP marker,
+supported model, ASUS firmware attributes, and `pcie_port_pm=off` are all
+detected. Uninstalled build artifacts still exit with code 64. The explicit
+`--poc-readonly`, `--poc-functional`, and `--poc-smoke` modes remain available
+for development and fail-closed testing.
 
 The application identifies itself as `1.0.90-x13.1`. Runtime self-update,
-self-install, self-repair, and self-removal are disabled. The final artifact
-is planned to use a signed RPM only after the daemon, polkit, udev, and
-hardware-transition phases pass review; no hardened installer exists yet.
+self-install, self-repair, and self-removal inside the GUI remain disabled. The
+separate `scripts/ghelper-xg-mvp.sh` command installs, reports, and uninstalls the
+model-specific MVP. A signed RPM remains later work.
 Generic helper extraction and embedded installer payloads are also disabled.
 External `gpu-helper`, `gpu-block-helper.sh`, and `ryzenadj` executables are not
 discovered or executed until a signed RPM package-identity design is reviewed.
 Remote changelog images are rendered as links/placeholders rather than fetched.
+
+`ghelperd` is a separate, versioned system D-Bus boundary. Its first enabled
+privileged operation is the already validated live XG Mobile transition; the GUI
+remains unprivileged and polkit authorizes the active local session. See
+[docs/privilege-boundary.md](docs/privilege-boundary.md).
 
 ### Local build
 
@@ -250,7 +254,7 @@ private Git snapshot. Provenance is computed inside that snapshot, compilation
 uses only that snapshot, and a post-build invariant rejects any staged change.
 Edits to the shared checkout after staging cannot change compiled inputs.
 The canonical container image cannot be overridden. The cache key covers all
-three lock files plus the relevant projects, props, and `global.json`; only
+four lock files plus the relevant projects, props, and `global.json`; only
 that exact package closure is copied to the private cache. Links and special
 filesystem nodes are rejected. The image ID and complete cache manifest are
 embedded in the artifact and their environment digest is part of its
@@ -283,7 +287,30 @@ Inspect the exact artifact provenance without launching the application:
 The first command prepares the digest-pinned SDK image and external locked
 NuGet cache. The second command is fail-closed and runs with container
 networking disabled. Use `--output /absolute/path` to preserve an existing
-`dist/`. See [docs/reproducible-build.md](docs/reproducible-build.md).
+`dist/`. The build now emits the GUI plus `system/ghelperd`. See
+[docs/reproducible-build.md](docs/reproducible-build.md).
+
+### Install the GV301QH MVP
+
+```bash
+GHELPER_DIRTY_REVIEW=1 GHELPER_OFFLINE=1 \
+  ./build.sh --no-aot --output /absolute/path/ghelper-xg-mvp-dist
+sudo ./scripts/ghelper-xg-mvp.sh install \
+  /absolute/path/ghelper-xg-mvp-dist "$USER"
+./scripts/ghelper-xg-mvp.sh status "$USER"
+```
+
+The first installation may request one reboot for `pcie_port_pm=off` and one
+new GNOME session for the Mutter udev rule. The installer does not enable GDM
+autologin. If it finds the known POC autologin backup, it restores the pre-POC
+GDM configuration. Rollback is:
+
+```bash
+sudo ./scripts/ghelper-xg-mvp.sh uninstall "$USER"
+```
+
+The uninstaller removes the kernel argument only when this installer originally
+added it. Configuration under `~/.config/ghelper` is preserved.
 
 Do not run any file under `install/`, copy `install/90-ghelper.rules`, or
 execute any binary from an upstream release. Every quarantined install file has

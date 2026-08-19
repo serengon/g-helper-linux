@@ -35,8 +35,10 @@ if ! command -v findmnt >/dev/null 2>&1 \
 fi
 
 SRC_DIR="$SCRIPT_DIR/src"
+DAEMON_DIR="$SCRIPT_DIR/daemon"
 DIST_DIR="$SCRIPT_DIR/dist"
 PUBLISH_DIR="$SRC_DIR/bin/Release/net10.0/linux-x64/publish"
+DAEMON_PUBLISH_DIR="$DAEMON_DIR/bin/Release/net10.0/linux-x64/publish"
 
 caller_provenance="${GHELPER_BUILD_PROVENANCE:-}"
 caller_version="${GHELPER_INFORMATIONAL_VERSION:-}"
@@ -197,6 +199,7 @@ safe_delete_generated_dir() {
     local candidate="$1"
     case "$candidate" in
         "$SRC_DIR/bin"|"$SRC_DIR/obj"|"$SRC_DIR/bin/Release"|"$SRC_DIR/obj/Release"|\
+        "$DAEMON_DIR/bin"|"$DAEMON_DIR/obj"|\
         "$SCRIPT_DIR/build/embedded"|"$DIST_DIR") ;;
         *)
             echo "ERROR: refusing unexpected generated-path cleanup: $candidate" >&2
@@ -296,11 +299,17 @@ else
     safe_delete_generated_dir "$SRC_DIR/bin/Release"
     safe_delete_generated_dir "$SRC_DIR/obj/Release"
 fi
+safe_delete_generated_dir "$DAEMON_DIR/bin"
+safe_delete_generated_dir "$DAEMON_DIR/obj"
 
 # Restore packages
 echo "[2/4] Restoring packages..."
 if ! dotnet restore "$SRC_DIR" --runtime linux-x64 --locked-mode -q; then
     echo "ERROR: Package restore failed."
+    exit 1
+fi
+if ! dotnet restore "$DAEMON_DIR" --runtime linux-x64 --locked-mode -q; then
+    echo "ERROR: Daemon package restore failed."
     exit 1
 fi
 
@@ -388,11 +397,19 @@ else
         --self-contained true -r linux-x64
 fi
 
+echo "    Compiling ghelperd native helper..."
+dotnet publish "$DAEMON_DIR" -c Release --no-restore \
+    -p:GHelperCanonicalDaemonBuild=true
+
 # Verify the binary was produced
 if [[ ! -f "$PUBLISH_DIR/ghelper" ]]; then
     echo ""
     echo "ERROR: Build failed — binary not found at $PUBLISH_DIR/ghelper"
     echo "Run 'dotnet publish src/ -c Release' manually to see full errors."
+    exit 1
+fi
+if [[ ! -f "$DAEMON_PUBLISH_DIR/ghelperd" ]]; then
+    echo "ERROR: daemon build failed - binary not found at $DAEMON_PUBLISH_DIR/ghelperd" >&2
     exit 1
 fi
 
@@ -407,6 +424,9 @@ else
     cp -r "$PUBLISH_DIR/." "$DIST_DIR/"
 fi
 chmod +x "$DIST_DIR/ghelper"
+mkdir -p "$DIST_DIR/system"
+cp "$DAEMON_PUBLISH_DIR/ghelperd" "$DIST_DIR/system/ghelperd"
+chmod +x "$DIST_DIR/system/ghelperd"
 
 # Summary
 BINARY_SIZE=$(du -sh "$DIST_DIR/ghelper" | cut -f1)
@@ -423,6 +443,7 @@ fi
 echo "  Binary:  $BINARY_SIZE  (ghelper)"
 echo "  Total:   $TOTAL_SIZE  ($FILE_COUNT files)"
 echo "  Output:  $DIST_DIR/"
+echo "  Daemon:  $DIST_DIR/system/ghelperd"
 echo ""
 echo "Run it:"
 echo "  $DIST_DIR/ghelper"

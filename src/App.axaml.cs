@@ -172,6 +172,20 @@ public class App : Application
             if (AppConfig.Is("topmost"))
                 MainWindowInstance.Topmost = true;
 
+            // MVP/development mode: construct and show the real status UI, but
+            // leave tray/hotkeys/Steam and startup auto-apply out of scope.
+            if (RuntimeMode.IsPocMode)
+            {
+                // No tray is created here; closing the only window exits.
+                desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
+                desktop.MainWindow = MainWindowInstance;
+                RegisterSignalHandlers(desktop);
+                Logger.WriteLine(
+                    $"{RuntimeMode.ModeBanner}: UI initialized; tray, hotkeys and startup auto-apply are disabled");
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             bool oskStart = desktop.Args?.Contains("--osk") == true;
             bool gameMode = Platform.Linux.SteamShortcuts.IsSteamDeckGameMode;
 
@@ -429,9 +443,29 @@ public class App : Application
         }
         Power = new LinuxPowerManager();
         System = new LinuxSystemIntegration();
+        Display = new LinuxDisplayControl();
+
+        if (RuntimeMode.IsPocReadOnly)
+        {
+            // Read-capable backends only. Do not construct input/audio/HID
+            // services or arm timers that re-apply saved state.
+            Input = null;
+            Audio = null;
+            Mode = null;
+            Smu = null;
+            IntelUv = null;
+            Ally = null;
+            AnimeMatrix = null;
+
+            GpuModeCtrl = new GPUModeControl(Wmi, Power);
+            InitializeGpuControl();
+            Logger.WriteLine($"{RuntimeMode.PocBanner}: read-only platform backends initialized");
+            LogFeatureDetection();
+            return;
+        }
+
         Input = new LinuxInputHandler();
         Audio = new LinuxAudioControl();
-        Display = new LinuxDisplayControl();
 
         Smu = new RyzenSmu();
         Logger.WriteLine(Smu.IsAvailable
@@ -1334,6 +1368,17 @@ public class App : Application
         // Don't rely on UI thread - it may already be blocked during session shutdown.
         Logger.WriteLine("Signal shutdown: cleaning up...");
 
+        if (RuntimeMode.IsPocMode)
+        {
+            // No production tray or shutdown re-apply hooks were armed in the POC.
+            try
+            { Wmi?.Dispose(); }
+            catch { }
+            Logger.WriteLine($"{RuntimeMode.PocBanner}: shutdown complete");
+            Environment.Exit(0);
+            return;
+        }
+
         DisposeTrayIcons();
 
         // Best-effort: apply pending Eco mode before shutdown
@@ -1533,8 +1578,13 @@ public class App : Application
     /// </summary>
     private static bool TryAcquireSingleInstanceLock()
     {
-        string lockDir = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? "/tmp";
-        string lockPath = Path.Combine(lockDir, "ghelper.lock");
+        string lockDir = RuntimeMode.IsPocMode && !RuntimeMode.IsInstalledMvp
+            ? RuntimeMode.PocRoot!
+            : Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? "/tmp";
+        string lockName = RuntimeMode.IsPocMode && !RuntimeMode.IsInstalledMvp
+            ? "ghelper-poc.lock"
+            : "ghelper.lock";
+        string lockPath = Path.Combine(lockDir, lockName);
 
         for (int attempt = 0; attempt < 2; attempt++)
         {

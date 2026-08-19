@@ -55,6 +55,13 @@
     <!-- Real-time monitoring charts -->
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.1.0-dev-798" />
     <PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.13" />
+    <!-- Explicit dependency for the non-privileged system D-Bus daemon client.
+         This exact version was already in the locked Avalonia closure. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\daemon\Contract\DaemonContract.cs" Link="Daemon\DaemonContract.cs" />
   </ItemGroup>
 
   <!-- Embed all assets -->

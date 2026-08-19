@@ -47,8 +47,11 @@ public static class NativeLibExtractor
         NativeLibrary.SetDllImportResolver(typeof(SkiaSharp.SKPaint).Assembly, ResolveNativeLib);
         NativeLibrary.SetDllImportResolver(typeof(HarfBuzzSharp.Blob).Assembly, ResolveNativeLib);
 
-        foreach (var tool in EagerTools)
-            _ = ExtractFromResources(tool, executable: true);
+        if (!RuntimeMode.IsPocReadOnly)
+        {
+            foreach (var tool in EagerTools)
+                _ = ExtractFromResources(tool, executable: true);
+        }
 
         Logger.WriteLine("NativeLibExtractor: done");
     }
@@ -59,7 +62,11 @@ public static class NativeLibExtractor
     /// accepted independently.
     /// </summary>
     public static string? FindTool(string toolName)
-        => ExtractFromResources(toolName, executable: true);
+    {
+        if (!RuntimeMode.TryAllowExternalProcess(toolName))
+            return null;
+        return ExtractFromResources(toolName, executable: true);
+    }
 
     private static string ExtractRequired(string resourceName, bool executable)
         => ExtractFromResources(resourceName, executable)

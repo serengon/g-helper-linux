@@ -41,6 +41,17 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     public string GetKernelVersion()
     {
+        if (Helpers.RuntimeMode.IsPocReadOnly)
+        {
+            try
+            {
+                return File.ReadAllText("/proc/sys/kernel/osrelease").Trim();
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
         return SysfsHelper.RunCommand("uname", "-r") ?? "Unknown";
     }
 
@@ -62,6 +73,9 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     public void SetAutostart(bool enabled)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("autostart"))
+            return;
+
         if (enabled)
         {
             Directory.CreateDirectory(_autostartDir);

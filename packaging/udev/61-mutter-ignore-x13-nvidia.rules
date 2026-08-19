@@ -1,0 +1,7 @@
+# Keep GNOME/Mutter on the integrated AMD GPU so the NVIDIA endpoint at
+# 0000:01:00.0 can be replaced without terminating the Wayland session.
+# These IDs are specific to the tested GV301QH configuration:
+#   10de:1f9d - internal GTX 1650 Max-Q
+#   10de:249c - RTX 3080 XG Mobile
+SUBSYSTEM=="drm", ENV{DEVTYPE}=="drm_minor", ENV{DEVNAME}=="/dev/dri/card[0-9]", SUBSYSTEMS=="pci", ATTRS{vendor}=="0x10de", ATTRS{device}=="0x1f9d", TAG+="mutter-device-ignore"
+SUBSYSTEM=="drm", ENV{DEVTYPE}=="drm_minor", ENV{DEVNAME}=="/dev/dri/card[0-9]", SUBSYSTEMS=="pci", ATTRS{vendor}=="0x10de", ATTRS{device}=="0x249c", TAG+="mutter-device-ignore"

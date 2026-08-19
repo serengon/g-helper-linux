@@ -199,7 +199,7 @@ public static class Spanish
         ["auto_screen_ac"] = "Auto: {0}Hz, overdrive activado",
         ["auto_screen_battery"] = "Auto: 60Hz, overdrive desactivado",
         ["setup_required"] = "Configuración necesaria",
-        ["udev_not_installed"] = "El acceso seguro al hardware no está disponible; el instalador endurecido sigue en desarrollo.",
+        ["udev_not_installed"] = "G-Helper XG Mobile MVP no está instalado o esta invocación no es compatible.",
 
         // SYSTEM TRAY
         ["tray_tooltip_cpu"] = "CPU: {0}",

@@ -231,6 +231,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult RequestModeSwitch(GpuMode target)
     {
+        if (!RuntimeMode.TryAllowMutation($"GPU mode switch to {target}"))
+            return GpuSwitchResult.Failed;
+
         if (!_switchLock.Wait(0))
         {
             // A hardware switch is blocking - can't start another.
@@ -419,6 +422,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult ScheduleModeForReboot(GpuMode target)
     {
+        if (!RuntimeMode.TryAllowMutation($"GPU mode schedule to {target}"))
+            return GpuSwitchResult.Failed;
+
         Logger.WriteLine($"GPUModeControl: ScheduleModeForReboot({target})");
 
         // SAFETY: If scheduling Eco but MUX is latched to 0, the user changed from
@@ -490,6 +496,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult ApplyPendingOnStartup()
     {
+        if (!RuntimeMode.TryAllowMutation("GPU pending startup apply"))
+            return GpuSwitchResult.AlreadySet;
+
         // Clear stale MUX=0 latch flag on reboot detection. Runs FIRST,
         // before any backend-specific path, because the persistent flag is
         // session-scoped and must not leak across boots regardless of which
@@ -746,6 +755,9 @@ public class GPUModeControl
     /// </summary>
     public void ApplyPendingOnShutdown()
     {
+        if (!RuntimeMode.TryAllowMutation("GPU pending shutdown apply"))
+            return;
+
         try
         {
             // PCI backend: the boot service applies pending modes on the

@@ -3,6 +3,8 @@ src/bin/
 src/obj/
 tests/**/bin/
 tests/**/obj/
+daemon/bin/
+daemon/obj/
 dist/
 build/
 .build-cache/
@@ -41,6 +43,7 @@ Desktop.ini
 
 # NuGet (packages restored on build)
 *.nupkg
+daemon/.local/
 .planning
 .opencode
 
