@@ -68,6 +68,9 @@ public class App : Application
     /// </summary>
     private static NativeMenuItem? _trayFnLockItem;
     private static NativeMenuItem? _trayDgpuStatusItem;
+    private static NativeMenuItem? _trayXgMobileItem;
+    private static IClassicDesktopStyleApplicationLifetime? _trayDesktop;
+    private static bool _trayXgMobileVisible;
 
     // Kernel runtime PM strings stay untranslated (technical labels).
     // null status with a known second GPU means Eco removed it from the bus.
@@ -82,6 +85,54 @@ public class App : Application
         string header = BuildDgpuStatusHeader();
         if ((_trayDgpuStatusItem.Header as string) != header)
             _trayDgpuStatusItem.Header = header;
+    }
+
+    /// <summary>
+    /// Keep the tray XG action synchronized with firmware/PCI state even while
+    /// the main window is hidden (and its own refresh timer is stopped). The
+    /// always-on tray monitor calls this every three seconds. A visibility
+    /// transition rebuilds the native menu; ordinary enable/disable changes
+    /// update the existing item in place.
+    /// </summary>
+    public static void RefreshTrayXgMobileState()
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(RefreshTrayXgMobileState);
+            return;
+        }
+
+        if (!RuntimeMode.IsInstalledMvp || MainWindowInstance == null)
+            return;
+
+        try
+        {
+            var state = MainWindowInstance.GetXgMobileTrayState();
+            if (state.Visible != _trayXgMobileVisible)
+            {
+                _trayXgMobileVisible = state.Visible;
+                if (TrayIconInstance != null && _trayDesktop != null && Current is App app)
+                    TrayIconInstance.Menu = app.CreateTrayMenu(_trayDesktop);
+                Logger.WriteLine($"Tray XG visibility refreshed: {state.Visible}");
+                return;
+            }
+
+            var item = _trayXgMobileItem;
+            if (item == null)
+                return;
+
+            bool changed = (item.Header as string) != state.Label
+                || item.IsEnabled != state.Enabled;
+            item.Header = state.Label;
+            item.IsEnabled = state.Enabled;
+            if (changed)
+                Logger.WriteLine(
+                    $"Tray XG state refreshed: {state.Label}, enabled={state.Enabled}");
+        }
+        catch (Exception ex)
+        {
+            Logger.WriteLine($"Tray XG state refresh failed: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -758,6 +809,7 @@ public class App : Application
 
     private void SetupTrayIcon(IClassicDesktopStyleApplicationLifetime desktop)
     {
+        _trayDesktop = desktop;
         // Tray icons on Linux use D-Bus StatusNotifierItem (SNI) protocol.
         // This requires a valid DBUS_SESSION_BUS_ADDRESS. The future hardened
         // package must provide access without launching the desktop app as root.
@@ -880,6 +932,7 @@ public class App : Application
         if (RuntimeMode.IsInstalledMvp && MainWindowInstance != null)
         {
             var xgState = MainWindowInstance.GetXgMobileTrayState();
+            _trayXgMobileVisible = xgState.Visible;
             if (xgState.Visible)
             {
                 var xgMobile = new NativeMenuItem(xgState.Label)
@@ -890,11 +943,14 @@ public class App : Application
                 {
                     xgMobile.IsEnabled = false;
                     await MainWindowInstance.ToggleXgMobileFromTrayAsync();
-                    var refreshed = MainWindowInstance.GetXgMobileTrayState();
-                    xgMobile.Header = refreshed.Label;
-                    xgMobile.IsEnabled = refreshed.Enabled;
+                    RefreshTrayXgMobileState();
                 };
+                _trayXgMobileItem = xgMobile;
                 menu.Add(xgMobile);
+            }
+            else
+            {
+                _trayXgMobileItem = null;
             }
         }
 
@@ -1456,6 +1512,9 @@ public class App : Application
                 TrayIconInstance.Dispose();
                 TrayIconInstance = null;
             }
+            _trayXgMobileItem = null;
+            _trayXgMobileVisible = false;
+            _trayDesktop = null;
         }
         catch { }
     }
