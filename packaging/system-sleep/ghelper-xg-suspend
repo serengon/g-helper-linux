@@ -1,0 +1,96 @@
+#!/usr/bin/bash
+
+set -eu
+
+readonly tag="ghelper-xg-suspend"
+readonly driver="/sys/bus/platform/drivers/amd_pmc"
+readonly device="AMDI0005:00"
+readonly marker="/run/ghelper-xg-suspend.armed"
+readonly product_file="/sys/class/dmi/id/product_name"
+readonly xg_enable="/sys/bus/platform/devices/asus-nb-wmi/egpu_enable"
+readonly boot_id_file="/proc/sys/kernel/random/boot_id"
+readonly xg_hid_power="/usr/libexec/ghelper/ghelper-xg-hid-power.py"
+
+log()
+{
+    logger -t "$tag" -- "$*"
+}
+
+is_target_machine()
+{
+    [ -r "$product_file" ] &&
+        [ "$(cat "$product_file")" = "ROG Flow X13 GV301QH_GV301QH" ]
+}
+
+case "${1-}/${2-}" in
+    pre/suspend)
+        if ! is_target_machine; then
+            log "refusing pre hook: unexpected machine identity"
+            exit 1
+        fi
+
+        if [ ! -r "$xg_enable" ] || [ "$(cat "$xg_enable")" != "1" ]; then
+            log "XG inactive; leaving amd_pmc unchanged"
+            exit 0
+        fi
+
+        if [ ! -L "$driver/$device" ]; then
+            log "refusing pre hook: amd_pmc is not bound to $device"
+            exit 1
+        fi
+
+        if [ ! -x "$xg_hid_power" ] || ! "$xg_hid_power" sleep; then
+            log "refusing suspend: XG HID sleep notification failed"
+            exit 1
+        fi
+
+        umask 077
+        cat "$boot_id_file" > "$marker"
+        if ! printf '%s\n' "$device" > "$driver/unbind"; then
+            rm -f -- "$marker"
+            "$xg_hid_power" wake || true
+            log "failed to unbind amd_pmc from $device"
+            exit 1
+        fi
+
+        if [ -L "$driver/$device" ]; then
+            rm -f -- "$marker"
+            "$xg_hid_power" wake || true
+            log "refusing suspend: amd_pmc remained bound"
+            exit 1
+        fi
+
+        log "pre hook complete: XG notified, amd_pmc unbound from $device"
+        ;;
+
+    post/suspend)
+        [ -f "$marker" ] || exit 0
+
+        if [ "$(cat "$marker")" != "$(cat "$boot_id_file")" ]; then
+            rm -f -- "$marker"
+            log "discarded stale marker from another boot"
+            exit 1
+        fi
+
+        if [ ! -L "$driver/$device" ]; then
+            printf '%s\n' "$device" > "$driver/bind"
+        fi
+
+        if [ ! -L "$driver/$device" ]; then
+            log "failed to rebind amd_pmc to $device"
+            exit 1
+        fi
+
+        if ! "$xg_hid_power" wake; then
+            log "post hook failed: XG HID wake notification failed"
+            exit 1
+        fi
+
+        rm -f -- "$marker"
+        log "post hook complete: amd_pmc rebound, XG wake notification sent"
+        ;;
+
+    *)
+        exit 0
+        ;;
+esac

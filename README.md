@@ -215,12 +215,12 @@ lsmod | grep asus
 
 The GV301QH MVP can switch the tested RTX 3080 XG Mobile in both directions
 without restarting GNOME. A normal launch is accepted only after the MVP marker,
-supported model, ASUS firmware attributes, and `pcie_port_pm=off` are all
-detected. Uninstalled build artifacts still exit with code 64. The explicit
+supported model, ASUS firmware attributes, and the targeted XG root-port PM
+policy are all detected. Uninstalled build artifacts still exit with code 64. The explicit
 `--poc-readonly`, `--poc-functional`, and `--poc-smoke` modes remain available
 for development and fail-closed testing.
 
-The application identifies itself as `1.0.90-x13.1`. Runtime self-update,
+The application identifies itself as `1.0.90-x13.2`. Runtime self-update,
 self-install, self-repair, and self-removal inside the GUI remain disabled. The
 separate `scripts/ghelper-xg-mvp.sh` command installs, reports, and uninstalls the
 model-specific MVP. A signed RPM remains later work.
@@ -229,9 +229,11 @@ External `gpu-helper`, `gpu-block-helper.sh`, and `ryzenadj` executables are not
 discovered or executed until a signed RPM package-identity design is reviewed.
 Remote changelog images are rendered as links/placeholders rather than fetched.
 
-`ghelperd` is a separate, versioned system D-Bus boundary. Its first enabled
-privileged operation is the already validated live XG Mobile transition; the GUI
-remains unprivileged and polkit authorizes the active local session. See
+`ghelperd` is a separate, versioned system D-Bus boundary. Its enabled
+privileged operations are the validated live XG Mobile transition and the
+internal dGPU Eco/Standard transition; the GUI remains unprivileged and polkit
+authorizes the active local session. Ultimate remains capability-driven and is
+shown only when firmware exposes `gpu_mux_mode`. See
 [docs/privilege-boundary.md](docs/privilege-boundary.md).
 
 ### Local build
@@ -300,8 +302,9 @@ sudo ./scripts/ghelper-xg-mvp.sh install \
 ./scripts/ghelper-xg-mvp.sh status "$USER"
 ```
 
-The first installation may request one reboot for `pcie_port_pm=off` and one
-new GNOME session for the Mutter udev rule. The installer does not enable GDM
+An upgrade from the earlier MVP may request one reboot to retire its global
+`pcie_port_pm=off` fallback. New installs use only the XG root-port udev policy.
+One new GNOME session may still be needed for the Mutter rule. The installer does not enable GDM
 autologin. If it finds the known POC autologin backup, it restores the pre-POC
 GDM configuration. Rollback is:
 
@@ -309,8 +312,9 @@ GDM configuration. Rollback is:
 sudo ./scripts/ghelper-xg-mvp.sh uninstall "$USER"
 ```
 
-The uninstaller removes the kernel argument only when this installer originally
-added it. Configuration under `~/.config/ghelper` is preserved.
+The migration removes the legacy kernel argument only when this installer
+originally added it; a preexisting user fallback is preserved. Configuration
+under `~/.config/ghelper` is preserved.
 
 Do not run any file under `install/`, copy `install/90-ghelper.rules`, or
 execute any binary from an upstream release. Every quarantined install file has

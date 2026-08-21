@@ -1,0 +1,4 @@
+# Keep only the GV301QH XG Mobile root port awake for reliable hot-switch.
+# The installer is model-gated; this matches the complete PCI identity and
+# intentionally does not depend on the current bus address.
+ACTION=="add|bind|change", SUBSYSTEM=="pci", ATTR{class}=="0x060400", ATTR{vendor}=="0x1022", ATTR{device}=="0x1633", ATTR{subsystem_vendor}=="0x1043", ATTR{subsystem_device}=="0x1662", TEST=="power/control", ATTR{power/control}="on"

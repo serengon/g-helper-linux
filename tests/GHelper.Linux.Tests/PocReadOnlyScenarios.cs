@@ -16,9 +16,34 @@ public static class PocReadOnlyScenarios
     public static void RunAll()
     {
         Console.WriteLine("\n POC read-only startup and mutation guard ");
+        TargetedRootPortPm_ReplacesLegacyGlobalKernelArgument();
         ExactFlags_AreClassifiedAndMalformedFlagsAreRefused();
         PocMode_BlocksCriticalMutationEntrypoints();
     }
+
+    private static void TargetedRootPortPm_ReplacesLegacyGlobalKernelArgument()
+        => Scenario(nameof(TargetedRootPortPm_ReplacesLegacyGlobalKernelArgument), sb =>
+        {
+            string pciRoot = Path.Combine(sb.TempRoot, "pci-devices");
+            string port = Path.Combine(pciRoot, "0000:00:01.1");
+            Directory.CreateDirectory(Path.Combine(port, "power"));
+            File.WriteAllText(Path.Combine(port, "class"), "0x060400\n");
+            File.WriteAllText(Path.Combine(port, "vendor"), "0x1022\n");
+            File.WriteAllText(Path.Combine(port, "device"), "0x1633\n");
+            File.WriteAllText(Path.Combine(port, "subsystem_vendor"), "0x1043\n");
+            File.WriteAllText(Path.Combine(port, "subsystem_device"), "0x1662\n");
+            File.WriteAllText(Path.Combine(port, "power", "control"), "on\n");
+
+            Assert(RuntimeMode.IsTargetedXgRootPortPmActive(pciRoot),
+                "exact XG root-port identity with power/control=on is accepted");
+            File.WriteAllText(Path.Combine(port, "power", "control"), "auto\n");
+            Assert(!RuntimeMode.IsTargetedXgRootPortPmActive(pciRoot),
+                "runtime-suspended XG root port fails closed");
+            File.WriteAllText(Path.Combine(port, "power", "control"), "on\n");
+            File.WriteAllText(Path.Combine(port, "subsystem_device"), "0xffff\n");
+            Assert(!RuntimeMode.IsTargetedXgRootPortPmActive(pciRoot),
+                "lookalike PCI bridge is rejected");
+        });
 
     private static void ExactFlags_AreClassifiedAndMalformedFlagsAreRefused()
         => Scenario(nameof(ExactFlags_AreClassifiedAndMalformedFlagsAreRefused), sb =>
@@ -41,6 +66,9 @@ public static class PocReadOnlyScenarios
             AssertEqual(RuntimeMode.StartupIntent.InstalledMvp,
                 RuntimeMode.ClassifyArguments(["--osk"], installedMvp: true),
                 "installed MVP accepts OSK follow-up launch");
+            AssertEqual(RuntimeMode.StartupIntent.InstalledMvp,
+                RuntimeMode.ClassifyArguments(["--minimized"], installedMvp: true),
+                "installed MVP accepts minimized session launch");
             AssertEqual(RuntimeMode.StartupIntent.Refused,
                 RuntimeMode.ClassifyArguments(["unexpected"], installedMvp: true),
                 "installed MVP refuses unknown arguments");
@@ -66,6 +94,12 @@ public static class PocReadOnlyScenarios
                 "simulated XGM refresh cannot re-enable mutation controls");
             Assert(!RuntimeMode.ShouldHideMainWindowOnClose(appIsShuttingDown: false),
                 "POC close is allowed to terminate instead of hiding to tray");
+            Assert(RuntimeMode.UsesBoundedSignalShutdown(
+                    RuntimeMode.StartupIntent.InstalledMvp),
+                "installed X13 signal shutdown is bounded");
+            Assert(!RuntimeMode.UsesBoundedSignalShutdown(
+                    RuntimeMode.StartupIntent.PocFunctional),
+                "development POC retains diagnostic cleanup");
             AssertEqual("quiet", AsusctlControlBridge.ProfileToken(2), "quiet profile mapping");
             AssertEqual("balanced", AsusctlControlBridge.ProfileToken(0), "balanced profile mapping");
             AssertEqual("performance", AsusctlControlBridge.ProfileToken(1), "performance profile mapping");

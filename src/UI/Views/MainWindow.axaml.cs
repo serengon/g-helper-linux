@@ -188,12 +188,12 @@ public partial class MainWindow : Window
         if (!RuntimeMode.IsPocMode)
             return;
 
-        pocReadOnlyBanner.IsVisible = true;
-        Title = $"G-Helper - {RuntimeMode.ModeBanner}";
+        pocReadOnlyBanner.IsVisible = !RuntimeMode.IsInstalledMvp;
+        Title = RuntimeMode.IsInstalledMvp
+            ? "G-Helper"
+            : $"G-Helper - {RuntimeMode.ModeBanner}";
         pocBannerTitle.Text = RuntimeMode.ModeBanner;
-        pocBannerDetails.Text = RuntimeMode.IsInstalledMvp
-            ? "Installed XG Mobile MVP. Hardware controls are enabled; system setup is managed by the installer."
-            : RuntimeMode.IsPocFunctional
+        pocBannerDetails.Text = RuntimeMode.IsPocFunctional
             ? "All detected laptop controls are enabled. Installer, updater and autostart remain disabled."
             : "Live hardware status. Controls, autostart, updates and services are disabled.";
 
@@ -206,7 +206,7 @@ public partial class MainWindow : Window
             _suppressEvents = false;
             checkStartup.IsEnabled = false;
             checkStartup.Content = RuntimeMode.IsInstalledMvp
-                ? "Autostart managed by MVP installation"
+                ? "Autostart managed by installation"
                 : "Autostart disabled in POC";
             buttonUpdates.IsVisible = false;
             buttonDevWindows.IsVisible = false;
@@ -696,7 +696,8 @@ public partial class MainWindow : Window
         bool pciBackend = Helpers.AppConfig.IsPciGpuBackend();
         bool gpuDev = Helpers.AppConfig.Is("show_gpu_dev");
         buttonUltimate.IsVisible = (!pciBackend && wmi.IsFeatureSupported(AsusAttributes.GpuMuxMode)) || gpuDev;
-        buttonOptimized.IsVisible = (!pciBackend && Helpers.AppConfig.IsOptimizedGpuModeEnabled()) || gpuDev;
+        buttonOptimized.IsVisible = (!RuntimeMode.IsInstalledMvp
+            && !pciBackend && Helpers.AppConfig.IsOptimizedGpuModeEnabled()) || gpuDev;
 
         int visibleGpuButtons = 2
             + (buttonUltimate.IsVisible ? 1 : 0)
@@ -756,6 +757,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        // The installed X13 path keeps all privileged teardown and firmware
+        // writes in ghelperd. MUX modes remain capability-driven below; on the
+        // GV301QH only Eco/Standard are exposed because gpu_mux_mode is absent.
+        if (RuntimeMode.IsInstalledMvp && target is GpuMode.Eco or GpuMode.Standard)
+        {
+            _ = RequestInstalledDgpuModeSwitchAsync(target, switchingText);
+            return;
+        }
+
         var gpu = App.GpuModeCtrl;
         if (gpu == null)
             return;
@@ -785,6 +795,105 @@ public partial class MainWindow : Window
                 HandleGpuSwitchResult(result, target);
             });
         });
+    }
+
+    /// <summary>
+    /// Installed GV301QH Eco/Standard flow. The GUI only requests a named,
+    /// allowlisted daemon operation and then derives completion from firmware,
+    /// PCI and driver readback. It never creates boot blacklists or assumes
+    /// success from the requested target.
+    /// </summary>
+    public async Task RequestInstalledDgpuModeSwitchAsync(GpuMode target, string? switchingText = null)
+    {
+        if (!RuntimeMode.IsInstalledMvp || target is not (GpuMode.Eco or GpuMode.Standard))
+            return;
+
+        var xgEnablePath = SysfsHelper.ResolveAttrPath(
+            Platform.Linux.AsusAttributes.EgpuEnable);
+        if (xgEnablePath != null && SysfsHelper.ReadAttribute(xgEnablePath)?.Trim() != "0")
+        {
+            App.System?.ShowNotification(Labels.Get("gpu_mode"),
+                "Disable XG Mobile before changing the internal GPU mode.", "dialog-warning");
+            RefreshGpuMode();
+            return;
+        }
+
+        LockGpuButtons(switchingText ?? (target == GpuMode.Eco
+            ? Labels.Get("gpu_switching_eco")
+            : Labels.Get("gpu_switching_standard")));
+        GpuQueryGate.Hold("installed internal dGPU transition");
+        try
+        {
+            string operation = target == GpuMode.Eco
+                ? "disable-dgpu-mode"
+                : "enable-dgpu-mode";
+            using var daemon = await GHelperDaemonClient.ConnectSystemAsync();
+            await daemon.RequestMutationAsync(operation);
+            Helpers.Logger.WriteLine($"Installed dGPU transition queued ({operation})");
+
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+            while (DateTime.UtcNow < deadline)
+            {
+                var disablePath = SysfsHelper.ResolveAttrPath(
+                    Platform.Linux.AsusAttributes.DgpuDisable);
+                string? disabled = disablePath != null
+                    ? SysfsHelper.ReadAttribute(disablePath)?.Trim()
+                    : null;
+                bool ready = target == GpuMode.Eco
+                    ? disabled == "1" && !IsInternalNvidiaPresent()
+                    : disabled == "0" && IsInternalNvidiaBound();
+                if (ready)
+                {
+                    Helpers.AppConfig.Set("gpu_mode", target == GpuMode.Eco ? "eco" : "standard");
+                    Helpers.AppConfig.Set("gpu_auto", 0);
+                    Helpers.Logger.WriteLine($"Installed dGPU transition completed ({operation})");
+                    HandleGpuSwitchResult(GpuSwitchResult.Applied, target);
+                    return;
+                }
+                await Task.Delay(500);
+            }
+
+            throw new TimeoutException("The internal GPU did not reach the requested hardware state.");
+        }
+        catch (Exception ex)
+        {
+            Helpers.Logger.WriteLine($"Installed dGPU transition failed: {ex.Message}");
+            App.System?.ShowNotification(Labels.Get("gpu_mode"),
+                $"Internal GPU transition failed: {ex.Message}", "dialog-error");
+        }
+        finally
+        {
+            GpuQueryGate.Resume();
+            UnlockGpuButtons();
+            RefreshGpuMode();
+        }
+    }
+
+    private static bool IsInternalNvidiaPresent()
+        => FindInternalNvidiaPciPath() != null;
+
+    private static bool IsInternalNvidiaBound()
+    {
+        string? path = FindInternalNvidiaPciPath();
+        return path != null
+            && Directory.Exists(Path.Combine(
+                "/sys/bus/pci/drivers/nvidia", Path.GetFileName(path)));
+    }
+
+    private static string? FindInternalNvidiaPciPath()
+    {
+        const string devicesPath = "/sys/bus/pci/devices";
+        try
+        {
+            foreach (string path in Directory.EnumerateDirectories(devicesPath))
+            {
+                if (SysfsHelper.ReadAttribute(Path.Combine(path, "vendor")) == "0x10de"
+                    && SysfsHelper.ReadAttribute(Path.Combine(path, "device")) == "0x1f9d")
+                    return path;
+            }
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>
@@ -2590,6 +2699,30 @@ public partial class MainWindow : Window
     }
 
     private async void ButtonXGM_Click(object? sender, RoutedEventArgs e)
+        => await ToggleXgMobileAsync(confirmDisable: true);
+
+    /// <summary>
+    /// Return the tray presentation from the same controls refreshed by the
+    /// main XG panel, avoiding a second interpretation of firmware/PCI state.
+    /// </summary>
+    public (string Label, bool Visible, bool Enabled) GetXgMobileTrayState()
+    {
+        RefreshXgMobile();
+        return (labelXGM.Text ?? Labels.Get("xgm_label"),
+            buttonXGM.IsVisible,
+            buttonXGM.IsEnabled && !_xgmToggling);
+    }
+
+    /// <summary>
+    /// Deliberate tray-menu selection uses the same daemon transition as the
+    /// main button. It skips the extra in-window confirmation because opening
+    /// the AppIndicator menu and selecting the stateful action is itself the
+    /// explicit gesture; polkit authorization remains unchanged.
+    /// </summary>
+    public Task ToggleXgMobileFromTrayAsync()
+        => ToggleXgMobileAsync(confirmDisable: false);
+
+    private async Task ToggleXgMobileAsync(bool confirmDisable)
     {
         if (!RuntimeMode.TryAllowMutation("XG Mobile button click"))
         {
@@ -2618,12 +2751,15 @@ public partial class MainWindow : Window
 
         if (currentlyEnabled)
         {
-            bool yes = await Dialogs.ConfirmDialog.ShowAsync(
-                this,
-                Labels.Get("xgm_disable_title"),
-                Labels.Get("xgm_disable_message"));
-            if (!yes)
-                return;
+            if (confirmDisable)
+            {
+                bool yes = await Dialogs.ConfirmDialog.ShowAsync(
+                    this,
+                    Labels.Get("xgm_disable_title"),
+                    Labels.Get("xgm_disable_message"));
+                if (!yes)
+                    return;
+            }
 
             // In the functional POC the root daemon owns HID and performs the
             // reset. Direct GUI access is intentionally unavailable.
@@ -2817,7 +2953,21 @@ public partial class MainWindow : Window
                 // is never presented as a completed transition.
                 await Task.Delay(TimeSpan.FromSeconds(1));
                 if (GetNvidiaDisplayPciSignature() == pciSignature)
+                {
+                    if (targetEnabled)
+                    {
+                        // The endpoint appears before the daemon finishes the
+                        // official 15 second HID/PCI settle and driver load.
+                        // Resuming nvidia-smi earlier can wedge the query gate
+                        // even though the transition completes successfully.
+                        Helpers.Logger.WriteLine(
+                            "XGMobile: endpoint present; waiting for daemon settle");
+                        await Task.Delay(TimeSpan.FromSeconds(16));
+                        if (GetNvidiaDisplayPciSignature() != pciSignature)
+                            continue;
+                    }
                     return;
+                }
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(500));

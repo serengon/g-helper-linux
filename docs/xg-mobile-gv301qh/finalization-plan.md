@@ -47,8 +47,8 @@ debe integrarse formalmente al producto y al paquete.
 
 Preparar una instalación desatendida de Fedora Workstation 44 que proporcione:
 
-- usuario gráfico `andres`;
-- usuario técnico `codex-admin`;
+- usuario gráfico de prueba;
+- usuario técnico de administración;
 - acceso SSH desde el primer arranque;
 - autologin gráfico para facilitar las transiciones de GPU;
 - dependencias necesarias para construir, instalar y ejecutar G-Helper;
@@ -59,8 +59,8 @@ X13. La instalación debe abortar si no coincide, para evitar borrar otro disco.
 
 ### Criterio de salida
 
-Fedora arranca en la X13, inicia la sesión de Andrés automáticamente y acepta
-SSH mediante `codex-admin` sin intervención adicional.
+Fedora arranca en la X13, inicia la sesión gráfica automáticamente y acepta SSH
+mediante el usuario técnico sin intervención adicional.
 
 ## Fase 2: restaurar la línea base funcional
 
@@ -108,25 +108,33 @@ La misma sesión GNOME sobrevive a varios cierres y aperturas de tapa con la RTX
 3080 activa. Después de cada ciclo, `amd_pmc` vuelve a estar vinculado, la RTX
 responde y no quedan tareas bloqueadas en estado `D`.
 
-## Fase 4: eliminar el workaround global de PCIe
+## Fase 4: eliminar el workaround global de PCIe — consolidada
 
-El MVP actual exige `pcie_port_pm=off`. Los experimentos posteriores indican
-que el hot-switch puede funcionar manteniendo en `on` solamente el root port de
-la XG Mobile.
+La primera POC exigía `pcie_port_pm=off`. Los experimentos posteriores
+confirmaron que el hot-switch funciona manteniendo en `on` solamente el root
+port de la XG Mobile.
 
-Se debe:
+La instalación consolidada:
 
-- identificar el root port por topología, no por una dirección PCI fija;
-- aplicar la política puntual antes de una transición XG;
-- restaurar el valor anterior cuando corresponda;
-- probar arranque, hot-switch, suspensión y reanudación sin el parámetro global;
-- conservar `pcie_port_pm=off` únicamente como fallback explícito si la política
-  acotada no resulta estable.
+- identifica el root port por su identidad PCI AMD/ASUS completa, sin una
+  dirección PCI fija en la regla;
+- aplica la política puntual mediante udev y verifica el valor efectivo;
+- migra el argumento global sólo cuando una versión anterior del mismo
+  instalador lo había agregado;
+- preserva un `pcie_port_pm=off` preexistente como fallback explícito del usuario.
+
+La migración y su reboot de control se completaron el 2026-08-21. El arranque
+volvió sin el argumento global, con el root port puntual en `on`, la GTX 1650
+enlazada automáticamente a `nvidia` y sin tareas `D`. También pasó el hot-switch
+bidireccional y la suspensión/reanudación con RTX activa sin el argumento global.
 
 ### Criterio de salida
 
 Todas las transiciones de la matriz física pasan sin el argumento global de
 GRUB. Si no pasan, la release mantiene el fallback documentado y reversible.
+
+**Estado:** cumplido para la combinación soportada. El fallback continúa
+documentado, pero no está activo en la instalación validada.
 
 ## Fase 5: completar el estado y feedback de la GUI
 
@@ -173,6 +181,32 @@ parcial o no soportado. La versión final debe habilitar al menos:
 Una función soportada no debe permanecer desactivada por los antiguos modos de
 POC. Una función no soportada debe ocultarse o explicar concretamente qué falta;
 no debe presentar un control que aparentemente funciona pero no hace nada.
+
+### Avance validado el 2026-08-21
+
+- el arranque instalado ya inicia hotkeys, perfiles, monitor de energía, AURA,
+  bandeja y servidor de comandos normales;
+- una regla udev otorga al usuario activo acceso únicamente al teclado ASUS
+  `0b05:19b6` y sus eventos, sin exponer el HID privilegiado de la XG
+  `0b05:1970`;
+- el perfil Balanced quedó aplicado y verificado;
+- el límite de carga quedó efectivo en 80 %;
+- sensores CPU, AMD, NVMe y RPM, brillo y panel interno a 120 Hz son legibles;
+- la inicialización automática del modo GPU heredado se omite en esta variante:
+  una configuración Eco obsoleta no puede apagar la GTX 1650 al arrancar;
+- el control XG permanece en el daemon privilegiado;
+- Eco/Standard de la GTX 1650 quedó bajo la misma frontera D-Bus/polkit y se
+  validó en vivo en ambos sentidos con readback de firmware, PCI y driver;
+- después del ciclo, la XG se reconectó físicamente sin activarla: firmware 1/0,
+  HID `0b05:1970` presente, GTX 1650 todavía en Standard y sin tareas en estado
+  D;
+- Ultimate se autodetecta por la presencia real de `gpu_mux_mode`; el GV301QH
+  probado no lo expone, por lo que el control no aparece.
+
+Los clicks visibles Eco -> Standard quedaron aceptados de punta a punta: la GUI
+encoló cada operación, esperó el readback real, actualizó el botón y emitió la
+notificación correspondiente. El empaquetado RPM y el hardening adicional
+siguen en fases posteriores.
 
 ### Criterio de salida
 

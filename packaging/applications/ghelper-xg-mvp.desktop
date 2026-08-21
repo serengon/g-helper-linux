@@ -2,9 +2,8 @@
 Type=Application
 Name=G-Helper X13
 Comment=ASUS ROG Flow X13 controls and live XG Mobile switching
-Exec=/opt/ghelper-xg-mvp/ghelper --minimized
+Exec=/opt/ghelper-xg-mvp/ghelper
 Icon=preferences-system
 Terminal=false
-X-GNOME-Autostart-enabled=true
-StartupNotify=false
+StartupNotify=true
 StartupWMClass=ghelper

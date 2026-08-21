@@ -5,7 +5,7 @@ namespace GHelper.Daemon.Contract;
 public static class DaemonContract
 {
     public const uint ApiVersion = 1;
-    public const string DaemonVersion = "1.0.90-x13.1-xg-mvp1";
+    public const string DaemonVersion = "1.0.90-x13.2-xg-mvp1";
     public const string ServiceName = "org.ghelper.Daemon1";
     public const string ObjectPath = "/org/ghelper/Daemon1";
     public const string InterfaceName = "org.ghelper.Daemon1";
@@ -28,15 +28,16 @@ public static class DaemonContract
     public const string MessageBusy = "The daemon is busy; retry later.";
     public const string MessageFailed = "The daemon rejected the request.";
 
-    public const string StatusState = "ready-xg-live";
-    public const string StatusDetail = "live XG Mobile transitions are available; other hardware mutations remain disabled";
+    public const string StatusState = "ready-x13-gpu-live";
+    public const string StatusDetail = "live XG Mobile and internal dGPU Eco/Standard transitions are available; other hardware mutations remain disabled";
 
     public static readonly string[] Capabilities =
     [
         "read.version",
         "read.capabilities",
         "read.status",
-        "mutate.xg-mode"
+        "mutate.xg-mode",
+        "mutate.dgpu-mode"
     ];
 
     public static readonly MutationDefinition[] Mutations =
@@ -45,6 +46,8 @@ public static class DaemonContract
         new("set-charge-limit", "org.ghelper.daemon.set-charge-limit"),
         new("set-fan-curve", "org.ghelper.daemon.set-fan-curve"),
         new("set-gpu-mode", "org.ghelper.daemon.set-gpu-mode"),
+        new("enable-dgpu-mode", "org.ghelper.daemon.set-gpu-mode"),
+        new("disable-dgpu-mode", "org.ghelper.daemon.set-gpu-mode"),
         new("enable-xg-mode", "org.ghelper.daemon.set-xg-mode"),
         new("disable-xg-mode", "org.ghelper.daemon.set-xg-mode")
     ];

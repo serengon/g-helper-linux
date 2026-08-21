@@ -22,6 +22,7 @@ public static class DaemonScenarios
         GranularAuthorization_UsesMappedActionAndResolvedCaller();
         AuthorizedMutation_StillHasNoExecutor();
         AuthorizedXgMutation_IsQueuedAfterPolkit();
+        AuthorizedDgpuMutation_IsQueuedAfterPolkit();
         InvalidSender_FailsBeforeIdentityLookupWhenEnabled();
         FutureMutationPipeline_IsBounded();
         BoundedTransport_RetainsSlotUntilCancelledCallCompletes();
@@ -62,9 +63,10 @@ public static class DaemonScenarios
         {
             var core = NewCore(out _, out _);
             string[] first = core.GetCapabilities();
-            Assert(first.Length == 4, "unexpected daemon capability count");
-            Assert(first.Count(c => c.StartsWith("mutate.", StringComparison.Ordinal)) == 1
-                && first.Contains("mutate.xg-mode", StringComparer.Ordinal),
+            Assert(first.Length == 5, "unexpected daemon capability count");
+            Assert(first.Count(c => c.StartsWith("mutate.", StringComparison.Ordinal)) == 2
+                && first.Contains("mutate.xg-mode", StringComparer.Ordinal)
+                && first.Contains("mutate.dgpu-mode", StringComparer.Ordinal),
                 "daemon mutation capabilities do not match the live executor");
             first[0] = "write.hardware";
             Assert(core.GetCapabilities()[0] == "read.version",
@@ -147,6 +149,23 @@ public static class DaemonScenarios
             AssertEqual(1, authorization.Calls, "XG authorization count");
             AssertEqual(1, executor.QueueCalls, "XG queue count");
             AssertEqual("disable-xg-mode", executor.LastOperation!, "queued XG operation");
+        });
+
+    private static void AuthorizedDgpuMutation_IsQueuedAfterPolkit()
+        => Scenario(nameof(AuthorizedDgpuMutation_IsQueuedAfterPolkit), _ =>
+        {
+            var authorization = new FakeAuthorization { Result = true };
+            var executor = new FakeMutationExecutor("disable-dgpu-mode");
+            var core = new DaemonCore(
+                new FakeIdentityResolver(),
+                authorization,
+                mutationExecutionEnabled: true,
+                mutationExecutor: executor);
+            core.RequestMutationAsync(":1.2", "disable-dgpu-mode", default)
+                .AsTask().GetAwaiter().GetResult();
+            AssertEqual(1, authorization.Calls, "dGPU authorization count");
+            AssertEqual(1, executor.QueueCalls, "dGPU queue count");
+            AssertEqual("disable-dgpu-mode", executor.LastOperation!, "queued dGPU operation");
         });
 
     private static void InvalidSender_FailsBeforeIdentityLookupWhenEnabled()

@@ -18,10 +18,12 @@ public static class RuntimeMode
 
     public const string InstalledMvpMarkerPath = "/etc/ghelper/xg-mobile-mvp.conf";
     private const string InstalledMvpMarkerFormat = "mode=xg-mobile-mvp-v1";
+    private const string RootPortPmRulePath =
+        "/etc/udev/rules.d/80-ghelper-xg-root-port-pm.rules";
 
     public static string ModeBanner => _intent switch
     {
-        StartupIntent.InstalledMvp => "XG MOBILE MVP",
+        StartupIntent.InstalledMvp => "G-HELPER X13",
         StartupIntent.PocFunctional => "POC FUNCTIONAL",
         _ => "POC READ-ONLY",
     };
@@ -47,7 +49,8 @@ public static class RuntimeMode
         IReadOnlyList<string> args, bool installedMvp = false)
     {
         if (installedMvp
-            && (args.Count == 0 || (args.Count == 1 && args[0] == "--osk")))
+            && (args.Count == 0
+                || (args.Count == 1 && args[0] is "--osk" or "--minimized")))
             return StartupIntent.InstalledMvp;
         if (args.Count != 1)
             return StartupIntent.Refused;
@@ -151,13 +154,49 @@ public static class RuntimeMode
             if (!lines.Contains(InstalledMvpMarkerFormat, StringComparer.Ordinal)
                 || !lines.Contains("model=GV301QH", StringComparer.Ordinal))
                 return false;
+            var rootPortRule = new FileInfo(RootPortPmRulePath);
+            if (!rootPortRule.Exists || rootPortRule.LinkTarget != null)
+                return false;
             string product = ReadTrimmed("/sys/class/dmi/id/product_name");
-            string commandLine = ReadTrimmed("/proc/cmdline");
             return product.Contains("GV301QH", StringComparison.OrdinalIgnoreCase)
-                && commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                    .Contains("pcie_port_pm=off", StringComparer.Ordinal)
+                && IsTargetedXgRootPortPmActive("/sys/bus/pci/devices")
                 && File.Exists("/sys/devices/platform/asus-nb-wmi/egpu_connected")
                 && File.Exists("/sys/devices/platform/asus-nb-wmi/egpu_enable");
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Validates the model-specific replacement for the legacy global
+    /// pcie_port_pm=off argument. Exactly one AMD/ASUS XG root port must match
+    /// and its runtime power policy must be pinned to "on".
+    /// </summary>
+    public static bool IsTargetedXgRootPortPmActive(string pciDevicesRoot)
+    {
+        try
+        {
+            if (!Path.IsPathFullyQualified(pciDevicesRoot)
+                || !Directory.Exists(pciDevicesRoot))
+                return false;
+
+            int matches = 0;
+            bool active = false;
+            foreach (string devicePath in Directory.EnumerateDirectories(pciDevicesRoot))
+            {
+                if (ReadTrimmed(Path.Combine(devicePath, "class")) != "0x060400"
+                    || ReadTrimmed(Path.Combine(devicePath, "vendor")) != "0x1022"
+                    || ReadTrimmed(Path.Combine(devicePath, "device")) != "0x1633"
+                    || ReadTrimmed(Path.Combine(devicePath, "subsystem_vendor")) != "0x1043"
+                    || ReadTrimmed(Path.Combine(devicePath, "subsystem_device")) != "0x1662")
+                    continue;
+
+                matches++;
+                active = ReadTrimmed(Path.Combine(devicePath, "power", "control")) == "on";
+            }
+            return matches == 1 && active;
         }
         catch
         {
@@ -187,9 +226,21 @@ public static class RuntimeMode
     public static bool FilterMutationControlEnabled(bool requestedEnabled)
         => !IsPocReadOnly && requestedEnabled;
 
-    /// <summary>The POC has no tray, so closing its only window must exit.</summary>
+    /// <summary>
+    /// Normal and installed-session modes own a tray icon, so a user close
+    /// hides the main window. Explicit development POCs still exit on close.
+    /// </summary>
     public static bool ShouldHideMainWindowOnClose(bool appIsShuttingDown)
-        => !IsPocMode && !appIsShuttingDown;
+        => (!IsPocMode || IsInstalledMvp) && !appIsShuttingDown;
+
+    /// <summary>
+    /// The installed X13 session app owns no state that must be flushed during
+    /// logout. Its hardware backend can be blocked in a kernel read while the
+    /// NVIDIA endpoint is changing, so SIGTERM must take the bounded process
+    /// exit path instead of waiting for backend disposal.
+    /// </summary>
+    public static bool UsesBoundedSignalShutdown(StartupIntent intent)
+        => intent == StartupIntent.InstalledMvp;
 
     private static void LogGuardOnce(string kind, string operation)
     {

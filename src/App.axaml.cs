@@ -172,9 +172,47 @@ public class App : Application
             if (AppConfig.Is("topmost"))
                 MainWindowInstance.Topmost = true;
 
-            // MVP/development mode: construct and show the real status UI, but
-            // leave tray/hotkeys/Steam and startup auto-apply out of scope.
-            if (RuntimeMode.IsPocMode)
+            // Installed X13 mode runs as a user-session tray application. Its
+            // package owns autostart and the tray command server, while the
+            // supported hardware services continue through the normal startup
+            // path below.
+            if (RuntimeMode.IsInstalledMvp)
+            {
+                bool startMinimized = desktop.Args?.Contains("--minimized") == true;
+                if (!startMinimized)
+                {
+                    WindowPositioner.BottomRight(MainWindowInstance);
+                    desktop.MainWindow = MainWindowInstance;
+                }
+
+                SetupTrayIcon(desktop);
+                CommandIpc.StartServer(command =>
+                {
+                    if (command == "show-main")
+                    {
+                        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                        {
+                            if (MainWindowInstance?.IsVisible == true)
+                                MainWindowInstance.Activate();
+                            else
+                                ToggleMainWindow();
+                        });
+                    }
+                    else if (command == "toggle-osk")
+                    {
+                        Avalonia.Threading.Dispatcher.UIThread.Post(ToggleOskWindow);
+                    }
+                });
+                UpdateTrayIcon();
+                RegisterSignalHandlers(desktop);
+                Logger.WriteLine(
+                    $"{RuntimeMode.ModeBanner}: session tray initialized; enabling supported startup services");
+            }
+
+            // Explicit development POCs construct and show the real status
+            // UI, but leave tray/hotkeys/Steam and startup auto-apply out of
+            // scope.
+            if (RuntimeMode.IsPocMode && !RuntimeMode.IsInstalledMvp)
             {
                 // No tray is created here; closing the only window exits.
                 desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -187,9 +225,10 @@ public class App : Application
             }
 
             bool oskStart = desktop.Args?.Contains("--osk") == true;
-            bool gameMode = Platform.Linux.SteamShortcuts.IsSteamDeckGameMode;
+            bool gameMode = !RuntimeMode.IsInstalledMvp
+                && Platform.Linux.SteamShortcuts.IsSteamDeckGameMode;
 
-            if (gameMode)
+            if (!RuntimeMode.IsInstalledMvp && gameMode)
             {
                 // gamescope (SteamOS game mode): run fullscreen like Heroic
                 // does - floating windows get broken input coordinate mapping
@@ -199,25 +238,31 @@ public class App : Application
             }
             // Show main window on startup unless "Start minimized to tray" is
             // enabled. "--osk" also skips it: the user asked for the keyboard.
-            else if (!AppConfig.Is("silent_start") && !oskStart)
+            else if (!RuntimeMode.IsInstalledMvp
+                     && !AppConfig.Is("silent_start") && !oskStart)
             {
                 WindowPositioner.BottomRight(MainWindowInstance);
                 desktop.MainWindow = MainWindowInstance;
             }
 
-            // Set up tray icon (secondary access method)
-            SetupTrayIcon(desktop);
+            // The installed X13 branch already owns its tray and command
+            // server. Generic runtime sets both up here.
+            if (!RuntimeMode.IsInstalledMvp)
+                SetupTrayIcon(desktop);
 
             // Start hotkey listener
             StartHotkeyListener();
 
             // Command socket for follow-up "ghelper --osk" invocations, and
             // the keyboard itself when this startup was osk-initiated.
-            CommandIpc.StartServer(cmd =>
+            if (!RuntimeMode.IsInstalledMvp)
             {
-                if (cmd == "toggle-osk")
-                    Avalonia.Threading.Dispatcher.UIThread.Post(ToggleOskWindow);
-            });
+                CommandIpc.StartServer(cmd =>
+                {
+                    if (cmd == "toggle-osk")
+                        Avalonia.Threading.Dispatcher.UIThread.Post(ToggleOskWindow);
+                });
+            }
             if (oskStart)
                 Avalonia.Threading.Dispatcher.UIThread.Post(ToggleOskWindow);
 
@@ -226,7 +271,7 @@ public class App : Application
 
             // One-time "add to Steam library?" offer. Not in game mode: the
             // app was just launched from Steam there.
-            if (!gameMode)
+            if (!RuntimeMode.IsInstalledMvp && !gameMode)
                 OfferSteamShortcutOnce();
 
             // Apply saved performance mode on startup
@@ -239,7 +284,7 @@ public class App : Application
             Fan.FanSensorControl.InitFanMax();
 
             // Phase 1 never attests or accepts legacy upstream udev content.
-            if (!Platform.Linux.NixOS.SkipUdevWarning)
+            if (!RuntimeMode.IsInstalledMvp && !Platform.Linux.NixOS.SkipUdevWarning)
             {
                 Logger.WriteLine("WARNING: package-attested hardware access is unavailable; legacy udev rules are not trusted.");
                 System?.ShowNotification(Labels.Get("setup_required"),
@@ -256,7 +301,7 @@ public class App : Application
                 // XG Mobile docks only attach to ASUS laptops; skip the USB
                 // probe elsewhere. AURA still probes on Generic so external
                 // ASUS RGB keyboards keep working.
-                if (AppConfig.IsAsusDevice())
+                if (AppConfig.IsAsusDevice() && !RuntimeMode.IsInstalledMvp)
                     USB.XGM.InitHardware();
                 Avalonia.Threading.Dispatcher.UIThread.Post(() => MainWindowInstance?.RefreshKeyboard());
             });
@@ -298,8 +343,11 @@ public class App : Application
             }, null, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
 
             // Ensure autostart .desktop file matches config preference and current binary path
-            bool autostart = AppConfig.IsNotFalse("autostart");
-            System?.SetAutostart(autostart);
+            if (!RuntimeMode.IsInstalledMvp)
+            {
+                bool autostart = AppConfig.IsNotFalse("autostart");
+                System?.SetAutostart(autostart);
+            }
 
             if (!AppConfig.IsOptimizedGpuModeEnabled() && AppConfig.Is("gpu_auto"))
             {
@@ -324,10 +372,12 @@ public class App : Application
             // Apply pending GPU mode from config (e.g., Eco scheduled for reboot)
             // Then apply auto GPU mode if Optimized is enabled
             // Run on background thread - SetGpuEco can block for 30-60 seconds
-            Task.Run(() =>
+            if (!RuntimeMode.IsInstalledMvp)
             {
+                Task.Run(() =>
+                {
 
-                GpuModeCtrl?.CacheDgpuSlotIfPresent();
+                    GpuModeCtrl?.CacheDgpuSlotIfPresent();
 
                 // Check for boot recovery marker (impossible state was fixed during boot)
                 const string RecoveryMarkerPath = "/etc/ghelper/last-recovery";
@@ -383,9 +433,16 @@ public class App : Application
                     }
                 }
 
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                    MainWindowInstance?.RefreshGpuModePublic());
-            });
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                        MainWindowInstance?.RefreshGpuModePublic());
+                });
+            }
+            else
+            {
+                GpuModeCtrl?.CacheDgpuSlotIfPresent();
+                Logger.WriteLine(
+                    "G-HELPER X13: legacy GPU-mode startup auto-apply skipped; XG transitions remain daemon-owned");
+            }
 
             // Restore clamshell mode if it was enabled
             if (AppConfig.Is("toggle_clamshell_mode"))
@@ -419,7 +476,8 @@ public class App : Application
 
             // Register Unix signal handlers for clean shutdown on SIGTERM/SIGINT
             // This prevents KDE/GNOME from hanging on logout/reboot
-            RegisterSignalHandlers(desktop);
+            if (!RuntimeMode.IsInstalledMvp)
+                RegisterSignalHandlers(desktop);
         }
 
         base.OnFrameworkInitializationCompleted();
@@ -810,6 +868,38 @@ public class App : Application
     {
         var menu = new NativeMenu();
 
+        // Primary entry: GNOME/AppIndicator opens the native menu for a tray
+        // click, so keep an obvious way to show the main window at the top.
+        var open = new NativeMenuItem(Labels.Get("settings"));
+        open.Click += (_, _) => ToggleMainWindow();
+        menu.Add(open);
+
+        // X13 installed mode: expose the validated XG transition directly in
+        // the tray and route it through MainWindow's authoritative daemon
+        // flow. The label and enabled state come from the same UI refresh.
+        if (RuntimeMode.IsInstalledMvp && MainWindowInstance != null)
+        {
+            var xgState = MainWindowInstance.GetXgMobileTrayState();
+            if (xgState.Visible)
+            {
+                var xgMobile = new NativeMenuItem(xgState.Label)
+                {
+                    IsEnabled = xgState.Enabled
+                };
+                xgMobile.Click += async (_, _) =>
+                {
+                    xgMobile.IsEnabled = false;
+                    await MainWindowInstance.ToggleXgMobileFromTrayAsync();
+                    var refreshed = MainWindowInstance.GetXgMobileTrayState();
+                    xgMobile.Header = refreshed.Label;
+                    xgMobile.IsEnabled = refreshed.Enabled;
+                };
+                menu.Add(xgMobile);
+            }
+        }
+
+        menu.Add(new NativeMenuItemSeparator());
+
         // Performance modes
         var silent = new NativeMenuItem(Labels.Get("mode_silent"));
         silent.Click += (_, _) => { Mode?.SetPerformanceMode(2, true); UpdateTrayIcon(); MainWindowInstance?.RefreshPerformanceMode(); };
@@ -865,11 +955,6 @@ public class App : Application
             menu.Add(new NativeMenuItemSeparator());
         }
 
-        // Settings
-        var settings = new NativeMenuItem(Labels.Get("settings"));
-        settings.Click += (_, _) => ToggleMainWindow();
-        menu.Add(settings);
-
         // ROG Ally - surface the controller-mode toggle directly in the tray
         // menu so handheld users don't have to open the main window for it.
         // Only visible on RC71L/RC72L.
@@ -920,9 +1005,12 @@ public class App : Application
 
         // On-screen keyboard, for touch-only use (SteamOS desktop mode on
         // handhelds). Types into the focused window via uinput.
-        var oskItem = new NativeMenuItem(Labels.Get("osk_tray_label"));
-        oskItem.Click += (_, _) => ToggleOskWindow();
-        menu.Add(oskItem);
+        if (!RuntimeMode.IsInstalledMvp)
+        {
+            var oskItem = new NativeMenuItem(Labels.Get("osk_tray_label"));
+            oskItem.Click += (_, _) => ToggleOskWindow();
+            menu.Add(oskItem);
+        }
 
         menu.Add(new NativeMenuItemSeparator());
 
@@ -1035,6 +1123,15 @@ public class App : Application
     /// </summary>
     private static void TrayGpuModeSwitch(GpuMode target)
     {
+        if (RuntimeMode.IsInstalledMvp
+            && target is GpuMode.Eco or GpuMode.Standard
+            && MainWindowInstance != null)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(async () =>
+                await MainWindowInstance.RequestInstalledDgpuModeSwitchAsync(target));
+            return;
+        }
+
         Task.Run(() =>
         {
             if (GpuModeCtrl == null)
@@ -1313,6 +1410,7 @@ public class App : Application
 
     // Unix signal handlers for clean shutdown on SIGTERM/SIGINT (logout/reboot)
     private static List<PosixSignalRegistration>? _signalRegistrations;
+    private static int _signalShutdownStarted;
 
     private void RegisterSignalHandlers(IClassicDesktopStyleApplicationLifetime desktop)
     {
@@ -1366,7 +1464,25 @@ public class App : Application
     {
         // Signal handler runs on a threadpool thread.
         // Don't rely on UI thread - it may already be blocked during session shutdown.
+        if (Interlocked.Exchange(ref _signalShutdownStarted, 1) != 0)
+            return;
+
+        IsShuttingDown = true;
         Logger.WriteLine("Signal shutdown: cleaning up...");
+
+        // Installed X13 mode may receive SIGTERM after XWayland has already
+        // disappeared, or while an ASUS/NVIDIA backend read is blocked in the
+        // kernel. Disposing either backend from this signal thread can then
+        // retain the entire user scope until systemd's timeout. The installed
+        // GUI has no unsaved hardware state: descriptors and the tray socket
+        // are process-owned, while ghelperd is stopped independently by
+        // systemd. Exit immediately and deterministically.
+        if (RuntimeMode.UsesBoundedSignalShutdown(RuntimeMode.Intent))
+        {
+            Logger.WriteLine("G-HELPER X13: bounded signal shutdown complete");
+            Environment.Exit(0);
+            return;
+        }
 
         if (RuntimeMode.IsPocMode)
         {

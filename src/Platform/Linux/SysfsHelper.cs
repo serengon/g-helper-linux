@@ -816,12 +816,14 @@ public static class SysfsHelper
             var outputTask = proc.StandardOutput.ReadToEndAsync();
             var errorTask = proc.StandardError.ReadToEndAsync();
 
-            if (outputTask.Wait(timeoutMs))
+            if (proc.WaitForExit(timeoutMs))
             {
+                // Both streams are drained asynchronously, so this wait cannot
+                // fill a child pipe. They should already be complete after
+                // process exit; keep the final join bounded defensively.
+                Task.WaitAll([outputTask, errorTask], 1000);
                 var output = outputTask.Result.Trim();
                 var errorOutput = errorTask.IsCompleted ? errorTask.Result.Trim() : "";
-
-                proc.WaitForExit(100); // Give a moment for exit code
 
                 if (proc.ExitCode != 0 && !string.IsNullOrEmpty(errorOutput))
                 {
@@ -834,10 +836,17 @@ public static class SysfsHelper
             {
                 try
                 {
-                    proc.Kill();
+                    proc.Kill(entireProcessTree: true);
                     Helpers.Logger.WriteLine($"RunCommand timeout: {fullCommand}");
                 }
                 catch { /* Ignore kill errors */ }
+
+                // Never wait indefinitely for a process stuck in kernel D
+                // state. If it survives SIGKILL, return to the circuit breaker
+                // and let the caller stop issuing further probes.
+                if (!proc.WaitForExit(250))
+                    Helpers.Logger.WriteLine(
+                        $"RunCommand process survived SIGKILL: pid={proc.Id} {fullCommand}");
                 return null;
             }
         }

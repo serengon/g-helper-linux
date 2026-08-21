@@ -72,16 +72,17 @@ rg -q '^\[Install\]$' packaging/systemd/ghelperd.service \
     || fail "legacy installer or GUI startup path bypasses the MVP installer"
 rg -q 'GHelperDaemonClient\.ConnectSystemAsync' src/UI/Views/MainWindow.axaml.cs \
     && rg -q 'RequestMutationAsync\(operation\)' src/UI/Views/MainWindow.axaml.cs \
-    || fail "XG Mobile UI is not routed through the daemon client"
+    || fail "GPU UI is not routed through the daemon client"
 rg -q 'new XgMobileMutationExecutor\(\)' daemon/Program.cs \
     && rg -q 'mutationExecutionEnabled: true' daemon/Program.cs \
-    || fail "production daemon does not enable the reviewed XG executor"
+    || fail "production daemon does not enable the reviewed GPU executor"
 ! rg -q '(/sys/|/dev/|File\.(Write|Append|Create)|File\.Open\([^\n]*(Write|ReadWrite)|new FileStream|DllImport|LibraryImport|NativeLibrary|ProcessStartInfo|Process\.Start|/bin/(sh|bash)|\b(sudo|pkexec|systemctl)\b|RunSudoOrPkexec|ServiceController|UnixFileMode)' \
     daemon -g '!**/Hardware/XgMobileMutationExecutor.cs' -g '!**/Hardware/XgMobileHid.cs' \
     || fail "a privileged write path escaped the reviewed XG executor"
 rg -q 'GV301QH' daemon/Hardware/XgMobileMutationExecutor.cs \
     && rg -q 'enable-xg-mode|disable-xg-mode' daemon/Hardware/XgMobileMutationExecutor.cs \
-    || fail "XG executor model/operation allowlist is missing"
+    && rg -q 'enable-dgpu-mode|disable-dgpu-mode' daemon/Hardware/XgMobileMutationExecutor.cs \
+    || fail "GPU executor model/operation allowlist is missing"
 
 rg -q 'TryRequestNameAsync' daemon/Program.cs \
     || fail "daemon does not handle name acquisition failure"
@@ -98,7 +99,7 @@ for action in \
         || fail "policy omits action $action"
 done
 
-echo "== XG Mobile daemon boundary checks passed =="
+echo "== X13 GPU daemon boundary checks passed =="
 if [[ "$STATIC_ONLY" == "1" ]]; then
     exit 0
 fi

@@ -11,6 +11,9 @@ namespace GHelper.Linux.Platform.Linux;
 public static class AsusctlControlBridge
 {
     private const string AsusctlPath = "/usr/bin/asusctl";
+    private const string BusctlPath = "/usr/bin/busctl";
+    private const string AsusdService = "xyz.ljones.Asusd";
+    private const string ArmouryInterface = "xyz.ljones.AsusArmoury";
     private const int CommandTimeoutMs = 5000;
 
     public static CommandResult SetPerformanceProfile(int mode)
@@ -46,6 +49,18 @@ public static class AsusctlControlBridge
     {
         if (!RuntimeMode.IsPocFunctional)
             return CommandResult.Refused;
+
+        // asusctl 6.4 warns about multiple interfaces on machines that expose
+        // both Platform and per-attribute Armoury objects. Address the exact
+        // object directly so a successful CLI exit can never refer to the
+        // wrong interface. Keep asusctl only as a compatibility fallback.
+        if (File.Exists(BusctlPath)
+            && int.TryParse(value, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int numericValue)
+            && IsSafeArmouryProperty(property))
+        {
+            return RunBusctlArmourySet(property, numericValue);
+        }
         return RunAsusctl("armoury", "set", property, value);
     }
 
@@ -165,6 +180,60 @@ public static class AsusctlControlBridge
         2 => "mid",
         _ => null,
     };
+
+    private static bool IsSafeArmouryProperty(string property)
+        => property.Length is > 0 and <= 64
+            && property.All(c => (c >= 'a' && c <= 'z') || c == '_' || char.IsAsciiDigit(c));
+
+    private static CommandResult RunBusctlArmourySet(string property, int value)
+    {
+        string objectPath = $"/xyz/ljones/asus_armoury/{property}";
+        string[] arguments =
+        [
+            "--system", "set-property", AsusdService, objectPath,
+            ArmouryInterface, "CurrentValue", "i",
+            value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ];
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = BusctlPath,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            foreach (string argument in arguments)
+                startInfo.ArgumentList.Add(argument);
+
+            using var process = new Process { StartInfo = startInfo };
+            if (!process.Start())
+                return new(false, "Could not start busctl.");
+            if (!process.WaitForExit(CommandTimeoutMs))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return new(false, "asusd D-Bus write timed out.");
+            }
+
+            string stdout = process.StandardOutput.ReadToEnd().Trim();
+            string stderr = process.StandardError.ReadToEnd().Trim();
+            if (process.ExitCode != 0)
+            {
+                string detail = stderr.Length > 0 ? stderr : stdout;
+                return new(false, detail.Length > 0 ? detail : $"busctl failed ({process.ExitCode}).");
+            }
+
+            Logger.WriteLine(
+                $"{RuntimeMode.PocBanner}: exact asusd attribute applied ({property}={value})");
+            return new(true, stdout);
+        }
+        catch (Exception ex)
+        {
+            Logger.WriteLine("Exact asusd attribute operation failed", ex);
+            return new(false, "asusd D-Bus write failed.");
+        }
+    }
 
     private static CommandResult RunAsusctl(params string[] arguments)
     {

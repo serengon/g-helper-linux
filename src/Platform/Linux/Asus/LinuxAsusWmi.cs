@@ -1305,17 +1305,10 @@ public class LinuxAsusWmi : IHardwareControl
         if (nvmlTemp > 0)
             return nvmlTemp;
 
-        // Last resort: nvidia-smi fork (~200ms)
+        // Last resort: the shared nvidia-smi gate serializes the query with XG
+        // transitions and permanently opens its breaker after one timeout.
         if (!nvSkip && Directory.Exists("/sys/module/nvidia"))
-        {
-            try
-            {
-                var output = SysfsHelper.RunCommand("nvidia-smi", "--query-gpu=temperature.gpu --format=csv,noheader,nounits");
-                if (!string.IsNullOrWhiteSpace(output) && int.TryParse(output.Trim(), out int smiTemp) && smiTemp > 0)
-                    return smiTemp;
-            }
-            catch { }
-        }
+            return Gpu.NVidia.LinuxNvidiaGpuControl.GetTempViaSmi() ?? -1;
 
         return -1;
     }

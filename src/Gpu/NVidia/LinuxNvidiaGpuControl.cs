@@ -61,6 +61,20 @@ public class LinuxNvidiaGpuControl : IGpuControl
                 : null;
     }
 
+    /// <summary>Temperature fallback through the shared NVIDIA query gate.
+    /// Platform backends must not fork nvidia-smi directly because that would
+    /// bypass transition serialization and the permanent circuit breaker.</summary>
+    public static int? GetTempViaSmi()
+    {
+        var output = RunNvidiaSmi(
+            "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits");
+        return !string.IsNullOrWhiteSpace(output)
+            && int.TryParse(output.Trim(), out int temperature)
+            && temperature > 0
+                ? temperature
+                : null;
+    }
+
     /// <summary>
     /// Fast GPU temp read via gpu-helper nvml-temp (~5ms, no nvidia-smi fork).
     /// Returns the temperature in Celsius or -1 on failure.
@@ -109,11 +123,7 @@ public class LinuxNvidiaGpuControl : IGpuControl
         }
 
         // Method 2: nvidia-smi
-        var output = RunNvidiaSmi("--query-gpu=temperature.gpu", "--format=csv,noheader,nounits");
-        if (output != null && int.TryParse(output.Trim(), out int smiTemp))
-            return smiTemp;
-
-        return null;
+        return GetTempViaSmi();
     }
 
     // Utilization
@@ -732,7 +742,10 @@ public class LinuxNvidiaGpuControl : IGpuControl
     // failures we stop calling nvidia-smi for a cooldown window.
     private static int _smiFailStreak;
     private static DateTime _smiCooldownUntilUtc;
-    private const int SmiTimeoutMs = 1200;
+    // The 610 open module on the GV301QH/XG takes about 1.9 s for a healthy
+    // query after S0ix is enabled. Keep the breaker bounded, but do not classify
+    // that measured wake latency as a wedged GPU.
+    private const int SmiTimeoutMs = 3000;
     private const int SmiFailThreshold = 1;
     private static readonly TimeSpan SmiCooldown = TimeSpan.FromSeconds(15);
 
@@ -796,9 +809,16 @@ public class LinuxNvidiaGpuControl : IGpuControl
             string? connectedPath = SysfsHelper.ResolveAttrPath(AsusAttributes.EgpuConnected);
             string? enabledPath = SysfsHelper.ResolveAttrPath(AsusAttributes.EgpuEnable);
             if (connectedPath != null && enabledPath != null
-                && SysfsHelper.ReadAttribute(connectedPath) != "0"
-                && SysfsHelper.ReadAttribute(enabledPath) == "0")
-                return true;
+                && SysfsHelper.ReadAttribute(connectedPath) != "0")
+            {
+                // A connected but disabled dock exposes the internal NVIDIA
+                // endpoint at the same BDF. Never wake or retain it because
+                // the daemon must be able to swap it for the XG GPU. Once the
+                // XG is enabled, however, the dock supplies external power and
+                // its telemetry must remain live instead of being hidden by
+                // the generic runtime-PM idle heuristic below.
+                return SysfsHelper.ReadAttribute(enabledPath) == "0";
+            }
         }
 
         if (IsDgpuSuspended())

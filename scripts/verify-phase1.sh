@@ -1099,8 +1099,8 @@ grep -Fq 'UNATTESTED ghelperd Release publishing is disabled' \
 "${container[@]}" "$image_id" dotnet run \
     --project tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj \
     -c Debug --no-restore 2>&1 | tee "$WORK_DIR/csharp.log"
-grep -Fq 'Total:  144' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
-grep -Fq 'Passed: 144' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
+grep -Fq 'Total:  146' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
+grep -Fq 'Passed: 146' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 grep -Fq 'Failed: 0' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 for security_test in \
     AtomicPayload_StaleCacheIsReplaced \
@@ -1126,6 +1126,7 @@ for security_test in \
     GranularAuthorization_UsesMappedActionAndResolvedCaller \
     AuthorizedMutation_StillHasNoExecutor \
     AuthorizedXgMutation_IsQueuedAfterPolkit \
+    AuthorizedDgpuMutation_IsQueuedAfterPolkit \
     InvalidSender_FailsBeforeIdentityLookupWhenEnabled \
     FutureMutationPipeline_IsBounded \
     BoundedTransport_RetainsSlotUntilCancelledCallCompletes \

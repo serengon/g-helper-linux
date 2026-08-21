@@ -53,6 +53,14 @@ class Program
         if (args.Contains("--osk") && CommandIpc.TrySend("toggle-osk"))
             return;
 
+        // The installed session instance normally starts minimized. Launching
+        // G-Helper again from the desktop menu asks that existing instance to
+        // show its window instead of silently losing to the instance lock.
+        if (RuntimeMode.IsInstalledMvp
+            && args.Length == 0
+            && CommandIpc.TrySend("show-main"))
+            return;
+
         // Last-resort logging: capture fatal exceptions to the log file before
         // the process dies (stderr is swallowed under Steam game mode).
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>

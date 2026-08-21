@@ -706,18 +706,10 @@ public class LinuxLenovoWmi : IHardwareControl
         if (nvmlTemp > 0)
             return nvmlTemp;
 
-        // Last resort: nvidia-smi fork (~200ms)
+        // Last resort: use the same serialized, fail-closed query path as the
+        // NVIDIA panel instead of spawning an untracked nvidia-smi process.
         if (!nvSkip && Directory.Exists("/sys/module/nvidia"))
-        {
-            try
-            {
-                var output = SysfsHelper.RunCommand("nvidia-smi",
-                    "--query-gpu=temperature.gpu --format=csv,noheader,nounits");
-                if (!string.IsNullOrWhiteSpace(output) && int.TryParse(output.Trim(), out int smiTemp) && smiTemp > 0)
-                    return smiTemp;
-            }
-            catch { }
-        }
+            return Gpu.NVidia.LinuxNvidiaGpuControl.GetTempViaSmi() ?? -1;
 
         return -1;
     }

@@ -18,10 +18,19 @@ UNIT_FILE="/etc/systemd/system/ghelperd.service"
 DBUS_FILE="/etc/dbus-1/system.d/org.ghelper.Daemon1.conf"
 POLKIT_FILE="/usr/share/polkit-1/actions/org.ghelper.daemon.policy"
 UDEV_FILE="/etc/udev/rules.d/61-mutter-ignore-x13-nvidia.rules"
-DESKTOP_FILE="/usr/share/applications/ghelper-xg-mvp.desktop"
+USER_DEVICE_RULE="/etc/udev/rules.d/62-ghelper-x13-user-devices.rules"
+ROOT_PORT_PM_RULE="/etc/udev/rules.d/80-ghelper-xg-root-port-pm.rules"
+PORTAL_DROPIN_DIR="/etc/systemd/user/xdg-desktop-portal-gnome.service.d"
+PORTAL_DROPIN_FILE="$PORTAL_DROPIN_DIR/50-ghelper-x13-integrated-gpu.conf"
+SUSPEND_HOOK_FILE="/usr/lib/systemd/system-sleep/ghelper-xg-suspend"
+HID_POWER_FILE="$DAEMON_DIR/ghelper-xg-hid-power.py"
+NVIDIA_SUSPEND_CONFIG="/etc/modprobe.d/ghelper-xg-suspend.conf"
+APPLICATION_NAME="ghelper-xg-mvp.desktop"
+DESKTOP_FILE="/usr/share/applications/$APPLICATION_NAME"
 DOC_DIR="/usr/share/doc/ghelper-xg-mvp"
 DOC_FILE="$DOC_DIR/privilege-boundary.md"
 AUTOSTART_NAME="ghelper-xg-mvp.desktop"
+NVIDIA_AUTOSTART_NAME="nvidia-settings-user.desktop"
 LEGACY_AUTOSTART_NAME="ghelper-poc-live-xg.desktop"
 
 usage() {
@@ -36,7 +45,8 @@ DIST_DIR must be a canonical G-Helper build containing:
   system/ghelperd
 
 The MVP currently supports only ASUS ROG Flow X13 GV301QH on GNOME/Mutter.
-Installation adds the Mutter udev rule and, when absent, $KERNEL_ARG.
+Installation keeps only the XG root port awake. A legacy $KERNEL_ARG that this
+installer previously added is removed on migration.
 EOF
 }
 
@@ -51,6 +61,11 @@ require_root() {
 
 command_required() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+user_systemctl() {
+    runuser -u "$TARGET_USER" -- \
+        env "XDG_RUNTIME_DIR=/run/user/$TARGET_UID" systemctl --user "$@"
 }
 
 state_value() {
@@ -93,6 +108,13 @@ preflight_host() {
         || die "ASUS XG Mobile firmware attributes are unavailable"
     command -v gnome-shell >/dev/null 2>&1 \
         || die "GNOME/Mutter is required by this MVP"
+    [[ -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]] \
+        || die "Mesa's GLVND EGL vendor file is required"
+    find_xg_root_port >/dev/null \
+        || die "the unique GV301QH XG root port is unavailable"
+    [[ -f /usr/lib/systemd/system/nvidia-suspend.service \
+       && -f /usr/lib/systemd/system/nvidia-resume.service ]] \
+        || die "xorg-x11-drv-nvidia-power is required for XG suspend/resume"
 }
 
 kernel_arg_running() {
@@ -121,22 +143,6 @@ kernel_arg_persisted() {
     kernel_arg_in_all_entries
 }
 
-ensure_kernel_cmdline_token() {
-    local file=/etc/kernel/cmdline content stage
-    [[ -f "$file" && ! -L "$file" ]] \
-        || die "Fedora kernel command line is missing or unsafe: $file"
-    content="$(cat "$file")"
-    [[ "$content" != *$'\n'* ]] || die "$file must contain exactly one command line"
-    case " $content " in
-        *" $KERNEL_ARG "*) return 0 ;;
-    esac
-    stage="$(mktemp /etc/kernel/.ghelper-cmdline.XXXXXX)"
-    printf '%s %s\n' "$content" "$KERNEL_ARG" >"$stage"
-    chown root:root "$stage"
-    chmod 0644 "$stage"
-    mv -f -- "$stage" "$file"
-}
-
 remove_kernel_cmdline_token() {
     local file=/etc/kernel/cmdline token stage
     [[ -f "$file" && ! -L "$file" ]] || return 0
@@ -149,6 +155,30 @@ remove_kernel_cmdline_token() {
     chown root:root "$stage"
     chmod 0644 "$stage"
     mv -f -- "$stage" "$file"
+}
+
+find_xg_root_port() {
+    local path found="" count=0
+    for path in /sys/bus/pci/devices/*; do
+        [[ -f "$path/class" && -f "$path/vendor" && -f "$path/device" \
+           && -f "$path/subsystem_vendor" && -f "$path/subsystem_device" \
+           && -f "$path/power/control" ]] || continue
+        [[ "$(cat "$path/class")" == "0x060400" \
+           && "$(cat "$path/vendor")" == "0x1022" \
+           && "$(cat "$path/device")" == "0x1633" \
+           && "$(cat "$path/subsystem_vendor")" == "0x1043" \
+           && "$(cat "$path/subsystem_device")" == "0x1662" ]] || continue
+        found="$path"
+        count=$((count + 1))
+    done
+    [[ "$count" == "1" ]] || return 1
+    printf '%s\n' "$found"
+}
+
+root_port_pm_active() {
+    local root_port
+    root_port="$(find_xg_root_port)" || return 1
+    [[ "$(cat "$root_port/power/control" 2>/dev/null)" == "on" ]]
 }
 
 validate_asset() {
@@ -214,6 +244,9 @@ install_user_files() {
     install -o "$TARGET_UID" -g "$TARGET_GID" -m 0644 \
         "$REPO_DIR/packaging/autostart/$AUTOSTART_NAME" \
         "$autostart_dir/$AUTOSTART_NAME"
+    install -o "$TARGET_UID" -g "$TARGET_GID" -m 0644 \
+        "$REPO_DIR/packaging/autostart/$NVIDIA_AUTOSTART_NAME" \
+        "$autostart_dir/$NVIDIA_AUTOSTART_NAME"
 
     old_config="$config_parent/ghelper-poc/ghelper"
     new_config="$config_parent/ghelper"
@@ -252,6 +285,8 @@ write_state() {
         printf 'user=%s\n' "$TARGET_USER"
         printf 'home=%s\n' "$TARGET_HOME"
         printf 'kernel_arg_added=%s\n' "$KERNEL_ARG_ADDED"
+        printf 'legacy_kernel_arg_preexisting=%s\n' "$LEGACY_KERNEL_ARG_PREEXISTING"
+        printf 'targeted_root_port_pm=1\n'
         printf 'gdm_autologin_restored=%s\n' "$GDM_AUTLOGIN_RESTORED"
         printf 'gui_sha256=%s\n' "$(sha256sum "$DIST_DIR_REAL/ghelper" | awk '{print $1}')"
         printf 'daemon_sha256=%s\n' "$(sha256sum "$DIST_DIR_REAL/system/ghelperd" | awk '{print $1}')"
@@ -264,7 +299,7 @@ write_state() {
 install_mvp() {
     require_root
     [[ $# == 2 ]] || { usage >&2; exit 64; }
-    for command in getent realpath grubby systemctl busctl udevadm sha256sum; do
+    for command in getent realpath grubby systemctl busctl udevadm sha256sum dracut python3 runuser; do
         command_required "$command"
     done
     resolve_user "$2"
@@ -275,7 +310,15 @@ install_mvp() {
         "$REPO_DIR/packaging/dbus/org.ghelper.Daemon1.conf" \
         "$REPO_DIR/packaging/polkit/org.ghelper.daemon.policy" \
         "$REPO_DIR/packaging/udev/61-mutter-ignore-x13-nvidia.rules" \
+        "$REPO_DIR/packaging/udev/62-ghelper-x13-user-devices.rules" \
+        "$REPO_DIR/packaging/udev/80-ghelper-xg-root-port-pm.rules" \
+        "$REPO_DIR/packaging/systemd/user/xdg-desktop-portal-gnome.service.d/50-ghelper-x13-integrated-gpu.conf" \
+        "$REPO_DIR/packaging/system-sleep/ghelper-xg-suspend" \
+        "$REPO_DIR/packaging/libexec/ghelper-xg-hid-power.py" \
+        "$REPO_DIR/packaging/modprobe/ghelper-xg-suspend.conf" \
+        "$REPO_DIR/packaging/applications/$APPLICATION_NAME" \
         "$REPO_DIR/packaging/autostart/$AUTOSTART_NAME" \
+        "$REPO_DIR/packaging/autostart/$NVIDIA_AUTOSTART_NAME" \
         "$REPO_DIR/docs/privilege-boundary.md"; do
         validate_asset "$asset"
     done
@@ -285,20 +328,43 @@ install_mvp() {
         [[ "$(state_value user)" == "$TARGET_USER" ]] \
             || die "existing MVP belongs to a different user"
         KERNEL_ARG_ADDED="$(state_value kernel_arg_added)"
-    elif kernel_arg_in_all_entries; then
+        LEGACY_KERNEL_ARG_PREEXISTING="$(state_value legacy_kernel_arg_preexisting || echo 0)"
+    elif kernel_arg_persisted; then
         KERNEL_ARG_ADDED=0
+        LEGACY_KERNEL_ARG_PREEXISTING=1
     else
-        KERNEL_ARG_ADDED=1
+        KERNEL_ARG_ADDED=0
+        LEGACY_KERNEL_ARG_PREEXISTING=0
     fi
 
     install_gui_tree
-    install -d -o root -g root -m 0755 "$DAEMON_DIR" "$MARKER_DIR"
+    install -d -o root -g root -m 0755 "$DAEMON_DIR" "$MARKER_DIR" \
+        "$PORTAL_DROPIN_DIR" /usr/lib/systemd/system-sleep /etc/modprobe.d
     install -o root -g root -m 0755 "$DIST_DIR_REAL/system/ghelperd" "$DAEMON_PATH"
     install -o root -g root -m 0644 "$REPO_DIR/packaging/systemd/ghelperd.service" "$UNIT_FILE"
     install -o root -g root -m 0644 "$REPO_DIR/packaging/dbus/org.ghelper.Daemon1.conf" "$DBUS_FILE"
     install -o root -g root -m 0644 "$REPO_DIR/packaging/polkit/org.ghelper.daemon.policy" "$POLKIT_FILE"
     install -o root -g root -m 0644 "$REPO_DIR/packaging/udev/61-mutter-ignore-x13-nvidia.rules" "$UDEV_FILE"
-    install -o root -g root -m 0644 "$REPO_DIR/packaging/autostart/$AUTOSTART_NAME" "$DESKTOP_FILE"
+    install -o root -g root -m 0644 \
+        "$REPO_DIR/packaging/udev/62-ghelper-x13-user-devices.rules" \
+        "$USER_DEVICE_RULE"
+    install -o root -g root -m 0644 \
+        "$REPO_DIR/packaging/udev/80-ghelper-xg-root-port-pm.rules" \
+        "$ROOT_PORT_PM_RULE"
+    install -o root -g root -m 0644 \
+        "$REPO_DIR/packaging/systemd/user/xdg-desktop-portal-gnome.service.d/50-ghelper-x13-integrated-gpu.conf" \
+        "$PORTAL_DROPIN_FILE"
+    install -o root -g root -m 0755 \
+        "$REPO_DIR/packaging/system-sleep/ghelper-xg-suspend" \
+        "$SUSPEND_HOOK_FILE"
+    install -o root -g root -m 0755 \
+        "$REPO_DIR/packaging/libexec/ghelper-xg-hid-power.py" \
+        "$HID_POWER_FILE"
+    install -o root -g root -m 0644 \
+        "$REPO_DIR/packaging/modprobe/ghelper-xg-suspend.conf" \
+        "$NVIDIA_SUSPEND_CONFIG"
+    install -o root -g root -m 0644 \
+        "$REPO_DIR/packaging/applications/$APPLICATION_NAME" "$DESKTOP_FILE"
     install -d -o root -g root -m 0755 "$DOC_DIR"
     install -o root -g root -m 0644 "$REPO_DIR/docs/privilege-boundary.md" "$DOC_FILE"
     {
@@ -308,22 +374,41 @@ install_mvp() {
     chown root:root "$MARKER_FILE"
     chmod 0644 "$MARKER_FILE"
 
-    if ! kernel_arg_in_all_entries; then
-        grubby --update-kernel=ALL --args="$KERNEL_ARG"
-    fi
-    ensure_kernel_cmdline_token
-    kernel_arg_in_all_entries || die "failed to persist $KERNEL_ARG"
-    kernel_arg_persisted || die "failed to persist $KERNEL_ARG for future kernels"
-
     install_user_files
     restore_poc_autologin
     write_state
 
     systemctl daemon-reload
+    systemctl mask nvidia-powerd.service
+    systemctl enable nvidia-suspend.service nvidia-resume.service \
+        nvidia-hibernate.service nvidia-suspend-then-hibernate.service
+    dracut --force "/boot/initramfs-$(uname -r).img" "$(uname -r)"
+    if systemctl --quiet is-active "user@${TARGET_UID}.service"; then
+        user_systemctl daemon-reload
+        user_systemctl \
+            try-restart xdg-desktop-portal-gnome.service xdg-desktop-portal.service
+    fi
     busctl call org.freedesktop.DBus /org/freedesktop/DBus \
         org.freedesktop.DBus ReloadConfig >/dev/null
     udevadm control --reload
+    ROOT_PORT_PATH="$(find_xg_root_port)" \
+        || die "the unique GV301QH XG root port disappeared"
+    udevadm trigger --subsystem-match=pci \
+        --sysname-match="$(basename "$ROOT_PORT_PATH")" --action=change
+    udevadm settle --timeout=20
+    root_port_pm_active \
+        || die "the targeted XG root-port runtime PM policy did not apply"
+    udevadm trigger --subsystem-match=input --action=change
+    udevadm trigger --subsystem-match=hidraw --action=change
+    udevadm settle --timeout=20
     udevadm trigger --subsystem-match=drm --action=add
+
+    if [[ "$KERNEL_ARG_ADDED" == "1" ]]; then
+        grubby --update-kernel=ALL --remove-args="$KERNEL_ARG"
+        remove_kernel_cmdline_token
+        KERNEL_ARG_ADDED=0
+        write_state
+    fi
     systemctl enable --now ghelperd.service
     systemctl restart ghelperd.service
     systemctl --quiet is-active ghelperd.service \
@@ -331,11 +416,14 @@ install_mvp() {
 
     echo
     echo "G-Helper XG Mobile MVP installed for $TARGET_USER."
-    if kernel_arg_running; then
-        echo "Kernel workaround already active. Log out/in once if Mutter has not seen the udev rule."
+    if kernel_arg_running && ! kernel_arg_persisted; then
+        echo "REBOOT REQUIRED: retire the legacy $KERNEL_ARG from the running kernel."
+    elif kernel_arg_running; then
+        echo "Legacy fallback remains user-managed: $KERNEL_ARG."
     else
-        echo "REBOOT REQUIRED: the current kernel does not yet have $KERNEL_ARG."
+        echo "Targeted XG root-port runtime PM policy is active."
     fi
+    echo "Log out/in once if Mutter has not seen the udev rule."
 }
 
 check_file() {
@@ -369,7 +457,7 @@ mutter_ignore_active() {
             | sed -n 's/^CURRENT_TAGS=//p')"
         [[ ":$tags:" == *":mutter-device-ignore:"* ]] || return 1
     done
-    [[ "$found" == "1" ]]
+    [[ "$found" == "1" ]] || return 2
 }
 
 status_mvp() {
@@ -386,10 +474,31 @@ status_mvp() {
     check_executable 'GUI executable' "$INSTALL_DIR/ghelper" || failures=$((failures + 1))
     check_executable 'daemon executable' "$DAEMON_PATH" || failures=$((failures + 1))
     check_file 'Mutter udev rule' "$UDEV_FILE" || failures=$((failures + 1))
+    check_file 'X13 user-device access rule' "$USER_DEVICE_RULE" \
+        || failures=$((failures + 1))
+    check_file 'targeted XG root-port PM rule' "$ROOT_PORT_PM_RULE" \
+        || failures=$((failures + 1))
+    if root_port_pm_active; then
+        printf 'ok      targeted XG root-port runtime PM active\n'
+    else
+        printf 'missing targeted XG root-port runtime PM active\n'
+        failures=$((failures + 1))
+    fi
+    check_file 'GNOME portal integrated-GPU override' "$PORTAL_DROPIN_FILE" \
+        || failures=$((failures + 1))
+    check_executable 'XG suspend hook' "$SUSPEND_HOOK_FILE" \
+        || failures=$((failures + 1))
+    check_executable 'XG HID power helper' "$HID_POWER_FILE" \
+        || failures=$((failures + 1))
+    check_file 'NVIDIA XG suspend configuration' "$NVIDIA_SUSPEND_CONFIG" \
+        || failures=$((failures + 1))
     check_file 'D-Bus policy' "$DBUS_FILE" || failures=$((failures + 1))
     check_file 'polkit policy' "$POLKIT_FILE" || failures=$((failures + 1))
     check_file 'installed MVP documentation' "$DOC_FILE" || failures=$((failures + 1))
     check_file 'user autostart' "$TARGET_HOME/.config/autostart/$AUTOSTART_NAME" \
+        || failures=$((failures + 1))
+    check_file 'NVIDIA settings autostart override' \
+        "$TARGET_HOME/.config/autostart/$NVIDIA_AUTOSTART_NAME" \
         || failures=$((failures + 1))
     if systemctl --quiet is-active ghelperd.service; then
         printf 'ok      ghelperd active\n'
@@ -397,25 +506,23 @@ status_mvp() {
         printf 'missing ghelperd active\n'
         failures=$((failures + 1))
     fi
-    if kernel_arg_persisted; then
-        printf 'ok      %s persisted\n' "$KERNEL_ARG"
-    else
-        printf 'missing %s in persistent kernel command line\n' "$KERNEL_ARG"
-        failures=$((failures + 1))
-    fi
-    if kernel_arg_running; then
-        printf 'ok      %s active\n' "$KERNEL_ARG"
-    else
-        printf 'reboot  %s not active in the running kernel\n' "$KERNEL_ARG"
-        failures=$((failures + 1))
-    fi
+    kernel_arg_persisted \
+        && printf 'warning legacy fallback %s is persisted\n' "$KERNEL_ARG" \
+        || printf 'ok      legacy global PCIe workaround is not persisted\n'
+    kernel_arg_running \
+        && printf 'warning legacy fallback %s is active in this boot\n' "$KERNEL_ARG" \
+        || printf 'ok      legacy global PCIe workaround is not active\n'
     if grep -Eq '^[[:space:]]*AutomaticLogin(Enable)?[[:space:]]*=' /etc/gdm/custom.conf 2>/dev/null; then
         printf 'warning GDM autologin is still configured\n'
     else
         printf 'ok      GDM autologin disabled\n'
     fi
-    if mutter_ignore_active; then
+    local mutter_rc=0
+    mutter_ignore_active || mutter_rc=$?
+    if [[ "$mutter_rc" == "0" ]]; then
         printf 'ok      Mutter ignores the active NVIDIA endpoint\n'
+    elif [[ "$mutter_rc" == "2" ]]; then
+        printf 'ok      no active NVIDIA DRM endpoint; Mutter rule is ready\n'
     else
         printf 'relogin Mutter ignore tag is not active on every NVIDIA endpoint\n'
         failures=$((failures + 1))
@@ -438,9 +545,14 @@ uninstall_mvp() {
 
     systemctl disable --now ghelperd.service 2>/dev/null || true
     rm -f -- "$UNIT_FILE" "$DBUS_FILE" "$POLKIT_FILE" "$UDEV_FILE" \
+        "$USER_DEVICE_RULE" \
+        "$ROOT_PORT_PM_RULE" \
+        "$PORTAL_DROPIN_FILE" "$SUSPEND_HOOK_FILE" "$HID_POWER_FILE" \
+        "$NVIDIA_SUSPEND_CONFIG" \
         "$DESKTOP_FILE" "$MARKER_FILE" "$DAEMON_PATH" \
         "$DOC_FILE" \
-        "$TARGET_HOME/.config/autostart/$AUTOSTART_NAME"
+        "$TARGET_HOME/.config/autostart/$AUTOSTART_NAME" \
+        "$TARGET_HOME/.config/autostart/$NVIDIA_AUTOSTART_NAME"
     if [[ -d "$INSTALL_DIR" && ! -L "$INSTALL_DIR" ]]; then
         find -P "$INSTALL_DIR" -depth -delete
     fi
@@ -449,10 +561,17 @@ uninstall_mvp() {
         remove_kernel_cmdline_token
     fi
     rmdir "$DAEMON_DIR" "$MARKER_DIR" "$DOC_DIR" 2>/dev/null || true
+    rmdir "$PORTAL_DROPIN_DIR" 2>/dev/null || true
     if [[ -d "$STATE_DIR" && ! -L "$STATE_DIR" ]]; then
         find -P "$STATE_DIR" -depth -delete
     fi
     systemctl daemon-reload
+    dracut --force "/boot/initramfs-$(uname -r).img" "$(uname -r)"
+    if systemctl --quiet is-active "user@${TARGET_UID}.service"; then
+        user_systemctl daemon-reload
+        user_systemctl \
+            try-restart xdg-desktop-portal-gnome.service xdg-desktop-portal.service
+    fi
     busctl call org.freedesktop.DBus /org/freedesktop/DBus \
         org.freedesktop.DBus ReloadConfig >/dev/null
     udevadm control --reload

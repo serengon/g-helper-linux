@@ -1,8 +1,8 @@
 # XG Mobile en caliente en Linux — ROG Flow X13 GV301QH
 
-**Estado:** MVP funcional e instalable para el GV301QH
+**Estado:** MVP funcional consolidado para el GV301QH
 
-**Fecha:** 2026-08-19
+**Última revalidación:** 2026-08-21
 
 **Equipo probado:** ASUS ROG Flow X13 GV301QH + XG Mobile RTX 3080 16 GiB
 
@@ -10,6 +10,10 @@ Esta carpeta es el punto de entrada para la investigación, el código y la
 evidencia del soporte XG Mobile del GV301QH. El build canónico ya entrega GUI y
 daemon juntos, y `scripts/ghelper-xg-mvp.sh` administra instalación, estado,
 migración desde el POC y desinstalación sin rutas de usuario hardcodeadas.
+
+La investigación de suspensión/reanudación, incluido el bloqueo reproducible con
+la XG activa y el workaround operativo, está en
+[suspend-resume.md](suspend-resume.md).
 
 ## Resultado
 
@@ -23,11 +27,12 @@ sin reiniciar la máquina, sin detener GDM y sin destruir la sesión Wayland. La
 sesión `46` y el proceso `gnome-shell` PID `20707` permanecieron iguales durante
 todo el ciclo.
 
-La solución necesitó resolver dos problemas independientes:
+La solución de hot-switch necesitó resolver dos problemas independientes:
 
 1. El firmware/enlace PCIe no completaba la transición mientras Linux administraba
-   energía de los puertos PCIe. El workaround mínimo confirmado es
-   `pcie_port_pm=off`.
+   energía del root port. El workaround consolidado fija `power/control=on`
+   únicamente en el bridge AMD/ASUS que alimenta la XG; reemplaza al antiguo
+   `pcie_port_pm=off` global.
 2. Aunque GNOME renderizaba el escritorio sobre la iGPU AMD, Mutter abría y retenía
    las dos GPU NVIDIA secundarias. Etiquetarlas con `mutter-device-ignore` permite
    descargar el driver NVIDIA sin terminar la sesión.
@@ -74,7 +79,7 @@ Se ensayaron estos parámetros:
 - solo `pcie_port_pm=off`: transición exitosa.
 - `pcie_aspm=off` no resultó necesario.
 
-La configuración mínima efectiva y persistente es:
+La configuración efectiva y persistente usada por la primera POC era:
 
 ```text
 pcie_port_pm=off
@@ -83,10 +88,40 @@ pcie_port_pm=off
 El 2026-08-19 la línea efectiva era:
 
 ```text
-BOOT_IMAGE=(hd0,gpt2)/vmlinuz-7.1.8-200.fc44.x86_64 root=UUID=d6ccd6aa-f49d-4410-825c-4b956ebfc414 ro rootflags=subvol=root rhgb quiet rd.driver.blacklist=nouveau,nova_core modprobe.blacklist=nouveau,nova_core pcie_port_pm=off
+BOOT_IMAGE=(hd0,gpt2)/vmlinuz-7.1.8-200.fc44.x86_64 root=UUID=<root-uuid> ro rootflags=subvol=root rhgb quiet rd.driver.blacklist=nouveau,nova_core modprobe.blacklist=nouveau,nova_core pcie_port_pm=off
 ```
 
 El parámetro quedó persistido en la configuración de kernel/GRUB de la X13.
+
+Esa frase describe la primera POC. Desde la consolidación del 2026-08-21 el
+parámetro global ya no está presente ni en `/etc/kernel/cmdline`, ni en las
+entradas BLS normales/de rescate, ni en la línea efectiva de arranque.
+
+### Política acotada confirmada posteriormente
+
+El 2026-08-20 se arrancó sin el parámetro global y se fijó únicamente:
+
+```text
+/sys/bus/pci/devices/0000:00:01.1/power/control=on
+```
+
+El root port es AMD `1022:1633`, subsistema ASUS `1043:1662`. Activar,
+desactivar y volver a activar la XG funcionó. Esto demuestra que el hot-switch
+no necesita deshabilitar PM en todos los puertos PCIe. La instalación consolidada
+identifica el root port por sus IDs PCI completos y aplica esa política acotada.
+
+La migración se comprobó además con un arranque real, XG físicamente conectada
+pero desactivada. La GTX 1650 cargó automáticamente con `nvidia` y el cambio en
+caliente GTX 1650 -> RTX 3080 -> GTX 1650 volvió a completar sin tareas `D`.
+El estado efectivo fue:
+
+```text
+pcie_port_pm=off: ausente
+0000:00:01.1/power/control: on
+egpu_connected/egpu_enable: 1/0
+dgpu_disable: 0
+GPU: GTX 1650, driver nvidia 610.57.04
+```
 
 ### Resultado PCIe
 
@@ -290,14 +325,8 @@ ciclo.
 
 ## Qué se aprendió del driver y del firmware público
 
-Existe un checkout de investigación separado en:
-
-```text
-/home/andres/Claude/XG_Mobile_Station
-```
-
-No se mueve ni se incorpora aquí porque es un proyecto externo con su propio Git
-y licencia.
+Existe un checkout de investigación separado. No se mueve ni se incorpora aquí
+porque es un proyecto externo con su propio Git y licencia.
 
 ### `XGMDriver` no implementa el hotplug
 
@@ -330,7 +359,7 @@ debe coordinar firmware/ACPI, HID, lifecycle del driver, rescan PCI y compositor
 El único archivo persistente localizado al cerrar esta jornada es:
 
 ```text
-/home/andres/Descargas/GV301QHAS418.zip
+GV301QHAS418.zip
 ```
 
 La revisión de firmware no produjo una interfaz nueva directamente utilizable. El
@@ -370,12 +399,6 @@ ghelperd: ba8dc72cb6b1cf6d14a86bd4060d71600fde1e08d910760d1d63f29a64b645f4
 udev:     33c7e10e9f1b7f1994f6d5533fe0a86aae4bcc365d7c8c8c515498f18c1ff984
 ```
 
-Staging histórico en la laptop:
-
-```text
-/home/andres/.local/share/ghelper-xg-live-stage
-```
-
 ## Archivos del desarrollo
 
 - [Ejecutor XG](../../daemon/Hardware/XgMobileMutationExecutor.cs)
@@ -387,10 +410,9 @@ Staging histórico en la laptop:
 - [Cliente D-Bus](../../src/Daemon/GHelperDaemonClient.cs)
 - [Botón/UI](../../src/UI/Views/MainWindow.axaml.cs)
 
-El desarrollo consolidado vive en:
+El desarrollo consolidado vive en este repositorio, en:
 
 ```text
-/home/andres/GitHub/g-helper-linux-x13
 branch: x13-hardened
 ```
 
@@ -398,13 +420,13 @@ El build, la instalación y el rollback canónicos están versionados en este mi
 árbol. No debe publicarse una release sin reconstruir el artefacto desde el commit
 que se quiera distribuir y revisar su manifiesto.
 
-Artefactos históricos, reemplazados por el build consolidado:
+Artefactos locales históricos, reemplazados por el build consolidado:
 
 ```text
-/home/andres/ghelper-x13-poc-live-xg-v1
-/home/andres/ghelper-x13-poc-dist
-/home/andres/Descargas/GV301QHAS418.zip
-/home/andres/Claude/XG_Mobile_Station
+ghelper-x13-poc-live-xg-v1
+ghelper-x13-poc-dist
+GV301QHAS418.zip
+XG_Mobile_Station
 ```
 
 ## Operación cotidiana
@@ -439,8 +461,14 @@ y eventualmente Xwayland si alguna aplicación lo hace abrir NVIDIA.
    funcionen mientras Mutter ignore la RTX. El modo probado usa el panel interno
    manejado por AMD y NVIDIA solo como render offload.
 2. Solo se validó formalmente el GV301QH con GTX 1650 `1f9d` y XG RTX 3080 `249c`.
-3. Hace falta probar suspensión/reanudación y un juego real antes
-   de llamar estable al flujo.
+3. Suspender en `s2idle` con la XG activa bloquea la máquina tanto en kernel
+   7.1.8 como 6.19.10 con NVIDIA 610. El fallo persiste con S0ix y usando tanto
+   el notificador del kernel como los servicios NVIDIA de Fedora. Sin los drivers
+   NVIDIA vinculados, la misma XG activa sí reanuda. `pm_trace` señaló como último
+   dispositivo a `0000:01:00.1`, el audio HDMI XG; falta el A/B que desvincula
+   sólo esa función. Además, arrancar en frío con `egpu_enable=1` puede bloquear
+   RM/NVIDIA. Hasta resolverlo, hay que desactivar la XG antes de cerrar la tapa,
+   reiniciar o apagar. Ver [suspend-resume.md](suspend-resume.md).
 4. El MVP es reproducible localmente, pero todavía no es un RPM firmado ni una release.
 
 ## Instalación y rollback
@@ -451,8 +479,9 @@ sudo ./scripts/ghelper-xg-mvp.sh install /ruta/absoluta/ghelper-xg-mvp-dist "$US
 sudo ./scripts/ghelper-xg-mvp.sh uninstall "$USER"
 ```
 
-El estado root-owned registra si `pcie_port_pm=off` ya existía o si fue agregado
-por el MVP. El rollback sólo retira el parámetro en el segundo caso. La regla de
+El estado root-owned registra si el `pcie_port_pm=off` legado era preexistente o
+había sido agregado por el MVP. La migración sólo lo retira en el segundo caso.
+La regla de
 Mutter, el daemon, D-Bus, polkit, autostart y GUI se eliminan por rutas exactas;
 la configuración del usuario se conserva.
 
@@ -460,12 +489,15 @@ la configuración del usuario se conserva.
 
 Prioridad funcional después de instalar el MVP consolidado:
 
-1. Mostrar en la app qué procesos impiden desconectar NVIDIA.
-2. Ejecutar Dota mediante PRIME y validar rendimiento/VRAM.
-3. Probar suspensión y reanudación en ambos estados.
-4. Decidir UX para monitores conectados a la XG: modo persistente sin outputs o
+1. Impedir suspensión/reinicio/apagado mientras la XG esté activa y explicar que
+   debe desactivarse primero.
+2. Ejecutar el A/B de suspensión con sólo `0000:01:00.1` desvinculado de
+   `snd_hda_intel`, repetir `pm_trace` y comprobar el rebind diferido del audio.
+3. Mostrar en la app qué procesos impiden desconectar NVIDIA.
+4. Ejecutar Dota mediante PRIME y validar rendimiento/VRAM.
+5. Decidir UX para monitores conectados a la XG: modo persistente sin outputs o
    modo de relogin que permita a Mutter manejar las salidas.
-5. Actualizar los reportes públicos con el segundo hallazgo de Mutter una vez que
+6. Actualizar los reportes públicos con el segundo hallazgo de Mutter una vez que
    el ciclo repetido y Dota estén validados.
 
 Hardening posterior:

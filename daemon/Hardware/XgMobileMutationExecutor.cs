@@ -9,8 +9,11 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
 {
     private const string EnableOperation = "enable-xg-mode";
     private const string DisableOperation = "disable-xg-mode";
+    private const string EnableDgpuOperation = "enable-dgpu-mode";
+    private const string DisableDgpuOperation = "disable-dgpu-mode";
     private const string EgpuEnablePath = "/sys/devices/platform/asus-nb-wmi/egpu_enable";
     private const string EgpuConnectedPath = "/sys/devices/platform/asus-nb-wmi/egpu_connected";
+    private const string DgpuDisablePath = "/sys/class/firmware-attributes/asus-armoury/attributes/dgpu_disable/current_value";
     private const string PciDevicesPath = "/sys/bus/pci/devices";
     private const string PciRescanPath = "/sys/bus/pci/rescan";
     private const string InternalNvidiaDeviceId = "0x1f9d";
@@ -18,7 +21,8 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
     private int _transitionRunning;
 
     public bool CanExecute(MutationDefinition mutation)
-        => mutation.Operation is EnableOperation or DisableOperation;
+        => mutation.Operation is EnableOperation or DisableOperation
+            or EnableDgpuOperation or DisableDgpuOperation;
 
     public bool TryQueue(MutationDefinition mutation)
     {
@@ -26,18 +30,28 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
             || Interlocked.CompareExchange(ref _transitionRunning, 1, 0) != 0)
             return false;
 
-        bool enable = mutation.Operation == EnableOperation;
+        bool xgOperation = mutation.Operation is EnableOperation or DisableOperation;
+        bool enable = mutation.Operation is EnableOperation or EnableDgpuOperation;
         _ = Task.Run(async () =>
         {
             try
             {
-                await ExecuteTransitionAsync(enable).ConfigureAwait(false);
-                Console.WriteLine($"XG Mobile live transition completed: enabled={enable}.");
+                if (xgOperation)
+                {
+                    await ExecuteTransitionAsync(enable).ConfigureAwait(false);
+                    Console.WriteLine($"XG Mobile live transition completed: enabled={enable}.");
+                }
+                else
+                {
+                    await ExecuteDgpuTransitionAsync(enable).ConfigureAwait(false);
+                    Console.WriteLine($"Internal dGPU live transition completed: enabled={enable}.");
+                }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine(
-                    $"XG Mobile live transition failed ({ex.GetType().Name}): {ex.Message}");
+                    $"{(xgOperation ? "XG Mobile" : "Internal dGPU")} live transition failed "
+                    + $"({ex.GetType().Name}): {ex.Message}");
             }
             finally
             {
@@ -144,6 +158,79 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
         }
     }
 
+    /// <summary>
+    /// Switch the internal NVIDIA GPU between Standard (enabled) and Eco
+    /// (firmware-disabled). The desktop remains on the AMD iGPU. This uses the
+    /// same holder scan and module teardown as XG switching, but deliberately
+    /// creates no boot-time blacklist: dgpu_disable is the authoritative,
+    /// persistent firmware state on supported ASUS hardware.
+    /// </summary>
+    private static async Task ExecuteDgpuTransitionAsync(bool enable)
+    {
+        ValidateMachineAndDgpuControl();
+
+        bool currentlyEnabled = ReadOneOrZero(DgpuDisablePath) == "0";
+        string? internalGpu = FindInternalNvidiaGpu();
+        if ((enable && currentlyEnabled && internalGpu is not null && IsNvidiaBound(internalGpu))
+            || (!enable && !currentlyEnabled && internalGpu is null))
+        {
+            Console.WriteLine($"Internal dGPU already has requested state: enabled={enable}.");
+            return;
+        }
+
+        string? audioFunction = internalGpu is null ? null : FindAudioFunction(internalGpu);
+        bool stateWriteCompleted = false;
+        try
+        {
+            Console.WriteLine($"Starting internal dGPU transition: {currentlyEnabled} -> {enable}.");
+            await RunOptionalAsync("/usr/bin/systemctl", ["stop", "nvidia-powerd.service"])
+                .ConfigureAwait(false);
+            await RunOptionalAsync("/usr/bin/systemctl", ["stop", "nvidia-persistenced.service"])
+                .ConfigureAwait(false);
+
+            if (!enable)
+            {
+                await WaitForNvidiaDeviceUsersToExitAsync(TimeSpan.FromSeconds(20))
+                    .ConfigureAwait(false);
+                if (audioFunction is not null)
+                    TryWriteDriverControl(audioFunction, "snd_hda_intel", "unbind");
+                await UnloadNvidiaModulesAsync().ConfigureAwait(false);
+
+                WriteSysfs(DgpuDisablePath, "1");
+                stateWriteCompleted = true;
+                await WaitForValueAsync(DgpuDisablePath, "1", TimeSpan.FromSeconds(30))
+                    .ConfigureAwait(false);
+                if (internalGpu is not null)
+                    await WaitForPciDeviceAsync(internalGpu, present: false, TimeSpan.FromSeconds(30))
+                        .ConfigureAwait(false);
+                return;
+            }
+
+            WriteSysfs(DgpuDisablePath, "0");
+            stateWriteCompleted = true;
+            await WaitForValueAsync(DgpuDisablePath, "0", TimeSpan.FromSeconds(30))
+                .ConfigureAwait(false);
+            internalGpu = await WaitForInternalNvidiaGpuAsync(TimeSpan.FromSeconds(35))
+                .ConfigureAwait(false);
+            await RunRequiredAsync("/usr/sbin/modprobe", ["nvidia"], CommandTimeout)
+                .ConfigureAwait(false);
+            await WaitForNvidiaBindingAsync(internalGpu, TimeSpan.FromSeconds(30))
+                .ConfigureAwait(false);
+
+            string? restoredAudio = FindAudioFunction(internalGpu);
+            if (restoredAudio is not null)
+                TryWriteDriverControl(restoredAudio, "snd_hda_intel", "bind");
+        }
+        catch
+        {
+            if (stateWriteCompleted)
+                await TryRestorePreviousDgpuStateAsync(currentlyEnabled).ConfigureAwait(false);
+            else if (internalGpu is not null)
+                await TryRestoreNvidiaStackAsync(audioFunction).ConfigureAwait(false);
+            throw;
+        }
+    }
+
     private static void ValidateMachineAndConnection()
     {
         string model = ReadRequired("/sys/class/dmi/id/product_name").Trim();
@@ -153,6 +240,17 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
             throw new InvalidOperationException("The legacy XG Mobile ACPI controls are absent.");
         if (ReadOneOrZero(EgpuConnectedPath) != "1")
             throw new InvalidOperationException("XG Mobile is not physically connected.");
+    }
+
+    private static void ValidateMachineAndDgpuControl()
+    {
+        string model = ReadRequired("/sys/class/dmi/id/product_name").Trim();
+        if (!model.Contains("GV301QH", StringComparison.Ordinal))
+            throw new InvalidOperationException($"Unsupported live-dGPU model '{model}'.");
+        if (!File.Exists(DgpuDisablePath))
+            throw new InvalidOperationException("The ASUS dgpu_disable firmware attribute is absent.");
+        if (File.Exists(EgpuEnablePath) && ReadOneOrZero(EgpuEnablePath) != "0")
+            throw new InvalidOperationException("Internal dGPU mode cannot change while XG Mobile is active.");
     }
 
     private static async Task UnloadNvidiaModulesAsync()
@@ -245,6 +343,23 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
         }
     }
 
+    private static async Task TryRestorePreviousDgpuStateAsync(bool enabled)
+    {
+        try
+        {
+            WriteSysfs(DgpuDisablePath, enabled ? "0" : "1");
+            if (enabled)
+            {
+                WriteSysfs(PciRescanPath, "1");
+                await TryRestoreNvidiaStackAsync(null).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Internal dGPU rollback failed ({ex.GetType().Name}).");
+        }
+    }
+
     private static async Task TryRestoreNvidiaStackAsync(string? audioFunction)
     {
         try
@@ -274,6 +389,19 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
         if (matches.Length > 1)
             throw new InvalidOperationException(
                 $"Expected at most one NVIDIA display function, found {matches.Length}.");
+        return matches.Length == 0 ? null : matches[0];
+    }
+
+    private static string? FindInternalNvidiaGpu()
+    {
+        string[] matches = FindNvidiaGpus()
+            .Where(pciFunction => string.Equals(
+                TryRead(Path.Combine(PciDevicesPath, pciFunction, "device"))?.Trim(),
+                InternalNvidiaDeviceId,
+                StringComparison.Ordinal))
+            .ToArray();
+        if (matches.Length > 1)
+            throw new InvalidOperationException("More than one internal NVIDIA GPU enumerated.");
         return matches.Length == 0 ? null : matches[0];
     }
 
@@ -309,6 +437,9 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
         => File.ReadLines("/proc/modules")
             .Any(line => line.StartsWith(module + " ", StringComparison.Ordinal));
 
+    private static bool IsNvidiaBound(string pciFunction)
+        => Directory.Exists(Path.Combine("/sys/bus/pci/drivers/nvidia", pciFunction));
+
     private static async Task WaitForPciDeviceAsync(string pciFunction, bool present, TimeSpan timeout)
     {
         string path = Path.Combine(PciDevicesPath, pciFunction);
@@ -340,6 +471,32 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
             await Task.Delay(500).ConfigureAwait(false);
         }
         throw new TimeoutException("The XG Mobile NVIDIA GPU did not enumerate after enabling.");
+    }
+
+    private static async Task<string> WaitForInternalNvidiaGpuAsync(TimeSpan timeout)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            string? internalGpu = FindInternalNvidiaGpu();
+            if (internalGpu is not null)
+                return internalGpu;
+            WriteSysfs(PciRescanPath, "1");
+            await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        }
+        throw new TimeoutException("The internal NVIDIA GPU did not enumerate after leaving Eco mode.");
+    }
+
+    private static async Task WaitForNvidiaBindingAsync(string pciFunction, TimeSpan timeout)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            if (IsNvidiaBound(pciFunction))
+                return;
+            await Task.Delay(500).ConfigureAwait(false);
+        }
+        throw new TimeoutException($"NVIDIA did not bind to internal GPU {pciFunction}.");
     }
 
     private static async Task WaitForValueAsync(string path, string expected, TimeSpan timeout)
