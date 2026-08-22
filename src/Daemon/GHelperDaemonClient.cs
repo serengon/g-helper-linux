@@ -82,6 +82,60 @@ public sealed class GHelperDaemonClient : IDisposable
             .WaitAsync(MutationTimeout, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task<string> StartMutationAsync(
+        string operation,
+        CancellationToken cancellationToken = default)
+    {
+        if (!DaemonContract.TryGetMutation(operation, out _))
+            throw new ArgumentException("Mutation is not in the versioned allowlist.", nameof(operation));
+        return CallWithStringAsync(
+            "StartMutation",
+            operation,
+            static message => message.GetBodyReader().ReadString(),
+            MutationTimeout,
+            cancellationToken);
+    }
+
+    public Task<MutationJobStatus> GetMutationStatusAsync(
+        string jobId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!DaemonContract.IsValidJobId(jobId))
+            throw new ArgumentException("Mutation job identifier is invalid.", nameof(jobId));
+        return CallWithStringAsync(
+            "GetMutationStatus",
+            jobId,
+            static message =>
+            {
+                var reader = message.GetBodyReader();
+                return new MutationJobStatus(
+                    reader.ReadString(),
+                    reader.ReadString(),
+                    reader.ReadString(),
+                    reader.ReadString());
+            },
+            DefaultTimeout,
+            cancellationToken);
+    }
+
+    public async Task<MutationJobStatus> WaitForMutationAsync(
+        string jobId,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            MutationJobStatus status = await GetMutationStatusAsync(jobId, cancellationToken)
+                .ConfigureAwait(false);
+            if (DaemonContract.IsTerminalMutationState(status.State))
+                return status;
+            await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        throw new TimeoutException("The daemon did not report a terminal mutation state.");
+    }
+
     public void Dispose()
     {
         if (_ownsConnection)
@@ -124,6 +178,34 @@ public sealed class GHelperDaemonClient : IDisposable
             member: "RequestMutation",
             signature: "s");
         writer.WriteString(operation);
+        return writer.CreateMessage();
+    }
+
+    private async Task<T> CallWithStringAsync<T>(
+        string member,
+        string argument,
+        Func<Message, T> readBody,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        MessageBuffer request = CreateStringCall(member, argument);
+        Task<T> call = _connection.CallMethodAsync(
+            request,
+            static (Message message, object? state) => ((Func<Message, T>)state!)(message),
+            readBody);
+        return await call.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    private MessageBuffer CreateStringCall(string member, string argument)
+    {
+        using MessageWriter writer = _connection.GetMessageWriter();
+        writer.WriteMethodCallHeader(
+            destination: DaemonContract.ServiceName,
+            path: DaemonContract.ObjectPath,
+            @interface: DaemonContract.InterfaceName,
+            member: member,
+            signature: "s");
+        writer.WriteString(argument);
         return writer.CreateMessage();
     }
 }

@@ -21,7 +21,22 @@ public interface IAuthorizationService
 public interface IMutationExecutor
 {
     bool CanExecute(MutationDefinition mutation);
-    bool TryQueue(MutationDefinition mutation);
+    MutationQueueResult TryQueue(MutationDefinition mutation);
+    bool TryGetStatus(string jobId, out MutationJobStatus status);
+}
+
+public enum MutationQueueState { Queued, Busy, GpuInUse }
+
+public readonly record struct MutationQueueResult(
+    MutationQueueState State,
+    string JobId = "")
+{
+    public static MutationQueueResult Queued(string jobId)
+        => new(MutationQueueState.Queued, jobId);
+    public static MutationQueueResult Busy()
+        => new(MutationQueueState.Busy);
+    public static MutationQueueResult GpuInUse()
+        => new(MutationQueueState.GpuInUse);
 }
 
 public sealed class DaemonRequestException : Exception
@@ -63,6 +78,15 @@ public sealed class DaemonCore
         => new(DaemonContract.StatusState, DaemonContract.StatusDetail);
 
     public async ValueTask RequestMutationAsync(
+        string uniqueBusName,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        _ = await StartMutationAsync(uniqueBusName, operation, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async ValueTask<string> StartMutationAsync(
         string uniqueBusName,
         string operation,
         CancellationToken cancellationToken)
@@ -115,14 +139,35 @@ public sealed class DaemonCore
             // Queue only after sender attribution and polkit authorization.
             // The XG transition stops the graphical session, so execution must
             // outlive the GUI D-Bus connection that requested it.
-            if (!_mutationExecutor.TryQueue(mutation))
-                throw new DaemonRequestException(
+            MutationQueueResult result = _mutationExecutor.TryQueue(mutation);
+            return result.State switch
+            {
+                MutationQueueState.Queued when DaemonContract.IsValidJobId(result.JobId)
+                    => result.JobId,
+                MutationQueueState.GpuInUse => throw new DaemonRequestException(
+                    DaemonContract.ErrorGpuInUse,
+                    "NVIDIA device holders blocked the requested transition."),
+                _ => throw new DaemonRequestException(
                     DaemonContract.ErrorBusy,
-                    "An XG Mobile transition is already in progress.");
+                    "A GPU transition is already in progress.")
+            };
         }
         finally
         {
             _mutationSlots.Release();
         }
+    }
+
+    public MutationJobStatus GetMutationStatus(string jobId)
+    {
+        if (!DaemonContract.IsValidJobId(jobId)
+            || _mutationExecutor is null
+            || !_mutationExecutor.TryGetStatus(jobId, out MutationJobStatus status))
+        {
+            throw new DaemonRequestException(
+                DaemonContract.ErrorInvalidArguments,
+                "The mutation job identifier is invalid or unknown.");
+        }
+        return status;
     }
 }

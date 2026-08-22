@@ -14,10 +14,17 @@ namespace GHelper.Linux.UI.Views;
 public partial class NvidiaProcessesWindow : Window
 {
     private readonly DispatcherTimer _refreshTimer;
+    private readonly bool _preflightMode;
+    private bool _preflightAccepted;
+    private int _blockerCount;
 
-    public NvidiaProcessesWindow()
+    public NvidiaProcessesWindow() : this(preflightMode: false) { }
+
+    private NvidiaProcessesWindow(bool preflightMode)
     {
+        _preflightMode = preflightMode;
         InitializeComponent();
+        panelPreflight.IsVisible = preflightMode;
 
         Labels.LanguageChanged += ApplyLabels;
         ApplyLabels();
@@ -31,13 +38,29 @@ public partial class NvidiaProcessesWindow : Window
             _refreshTimer.Start();
         };
 
-        Closing += (_, _) => _refreshTimer.Stop();
+        Closing += (_, _) =>
+        {
+            _refreshTimer.Stop();
+            Labels.LanguageChanged -= ApplyLabels;
+        };
+    }
+
+    public static async System.Threading.Tasks.Task<bool> ShowPreflightAsync(Window owner)
+    {
+        var window = new NvidiaProcessesWindow(preflightMode: true);
+        if (Helpers.AppConfig.Is("topmost"))
+            window.Topmost = true;
+        await window.ShowDialog(owner);
+        return window._preflightAccepted;
     }
 
     private void ApplyLabels()
     {
         Title = Labels.Get("gpu_dgpu_processes_title");
         labelRefresh.Text = Labels.Get("gpu_refresh");
+        labelPreflight.Text = Labels.Get("gpu_preflight_body");
+        buttonPreflightCancel.Content = Labels.Get("cancel");
+        buttonPreflightRetry.Content = Labels.Get("gpu_preflight_retry");
     }
 
     private void ButtonRefresh_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -45,8 +68,20 @@ public partial class NvidiaProcessesWindow : Window
 
     private void RefreshList()
     {
+        NvidiaProcessScanner.InvalidateScanCache();
         var holders = NvidiaProcessScanner.ScanHolders();
-        labelHeader.Text = Labels.Format("gpu_dgpu_users_count", holders.Count);
+        _blockerCount = holders.Count(holder => holder.BlocksUnload);
+        labelHeader.Text = Labels.Format("gpu_dgpu_users_count",
+            _preflightMode ? _blockerCount : holders.Count);
+        if (_preflightMode)
+        {
+            buttonPreflightRetry.Content = _blockerCount == 0
+                ? Labels.Get("gpu_preflight_continue")
+                : Labels.Get("gpu_preflight_retry");
+            labelPreflight.Text = _blockerCount == 0
+                ? Labels.Get("gpu_preflight_ready")
+                : Labels.Get("gpu_preflight_body");
+        }
         panelProcessList.Children.Clear();
 
         if (holders.Count == 0)
@@ -260,6 +295,7 @@ public partial class NvidiaProcessesWindow : Window
         string question = force
             ? Labels.Format("gpu_force_kill_confirm", holder.Comm, holder.Pid)
             : Labels.Format("gpu_kill_confirm", holder.Comm, holder.Pid);
+        question += "\n\n" + Labels.Get("gpu_kill_tree_warning");
 
         bool confirmed = await ConfirmKillDialog(question);
         if (!confirmed)
@@ -272,6 +308,25 @@ public partial class NvidiaProcessesWindow : Window
         }
 
         RefreshList();
+    }
+
+    private void ButtonPreflightCancel_Click(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _preflightAccepted = false;
+        Close();
+    }
+
+    private void ButtonPreflightRetry_Click(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        RefreshList();
+        if (_blockerCount != 0)
+            return;
+        _preflightAccepted = true;
+        Close();
     }
 
     private async System.Threading.Tasks.Task<bool> ConfirmKillDialog(string question)

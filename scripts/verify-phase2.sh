@@ -71,13 +71,16 @@ rg -q '^\[Install\]$' packaging/systemd/ghelperd.service \
     install src/Program.cs src/App.axaml.cs \
     || fail "legacy installer or GUI startup path bypasses the MVP installer"
 rg -q 'GHelperDaemonClient\.ConnectSystemAsync' src/UI/Views/MainWindow.axaml.cs \
-    && rg -q 'RequestMutationAsync\(operation\)' src/UI/Views/MainWindow.axaml.cs \
+    && rg -q 'StartMutationAsync\(' src/UI/Views/MainWindow.axaml.cs \
+    && rg -q 'WaitForMutationAsync\(' src/UI/Views/MainWindow.axaml.cs \
     || fail "GPU UI is not routed through the daemon client"
 rg -q 'new XgMobileMutationExecutor\(\)' daemon/Program.cs \
     && rg -q 'mutationExecutionEnabled: true' daemon/Program.cs \
     || fail "production daemon does not enable the reviewed GPU executor"
 ! rg -q '(/sys/|/dev/|File\.(Write|Append|Create)|File\.Open\([^\n]*(Write|ReadWrite)|new FileStream|DllImport|LibraryImport|NativeLibrary|ProcessStartInfo|Process\.Start|/bin/(sh|bash)|\b(sudo|pkexec|systemctl)\b|RunSudoOrPkexec|ServiceController|UnixFileMode)' \
-    daemon -g '!**/Hardware/XgMobileMutationExecutor.cs' -g '!**/Hardware/XgMobileHid.cs' \
+    daemon -g '!**/Hardware/XgMobileMutationExecutor.cs' \
+           -g '!**/Hardware/XgMobileHid.cs' \
+           -g '!**/Hardware/NvidiaDeviceHolderScanner.cs' \
     || fail "a privileged write path escaped the reviewed XG executor"
 rg -q 'GV301QH' daemon/Hardware/XgMobileMutationExecutor.cs \
     && rg -q 'enable-xg-mode|disable-xg-mode' daemon/Hardware/XgMobileMutationExecutor.cs \

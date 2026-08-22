@@ -175,6 +175,11 @@ public static class Vietnamese
         ["gpu_kill_failure_body"] = "Đã hủy chuyển đổi GPU. Không thể dừng các tiến trình sau:",
         ["gpu_kill_failure_retry"] = "Thử lại",
         ["gpu_refresh"] = "Làm mới",
+        ["gpu_preflight_body"] = "The GPU cannot switch while these applications keep NVIDIA devices open. Close them normally, use Close/Force kill if needed, then retry.",
+        ["gpu_preflight_retry"] = "Retry",
+        ["gpu_preflight_continue"] = "Continue",
+        ["gpu_preflight_ready"] = "No NVIDIA device holders remain. Continue with the GPU transition.",
+        ["gpu_kill_tree_warning"] = "Related child processes may also close. If this is your terminal, closing it will end every task running inside it.",
 
         // KEYBOARD NOTIFICATIONS
         ["kbd_off"] = "Tắt  \u25cb\u25cb\u25cb",

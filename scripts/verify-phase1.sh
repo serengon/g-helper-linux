@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENGINE="${CONTAINER_ENGINE:-docker}"
+container_user_args=(--user "$(id -u):$(id -g)")
+if [[ "$(basename -- "$ENGINE")" == "podman" ]]; then
+    container_user_args=(--userns=keep-id --user "$(id -u):$(id -g)")
+fi
 WORK_DIR="$(mktemp -d -t ghelper-phase1.XXXXXX)"
 VERIFY_SOURCE="$WORK_DIR/reviewed-source"
 VERIFY_CACHE_HOME="$WORK_DIR/xdg-cache"
@@ -118,8 +122,10 @@ assert_no_ignored_build_outputs() {
 head_commit="$(git rev-parse HEAD)"
 git merge-base --is-ancestor "$GHELPER_UPSTREAM_COMMIT" "$head_commit" \
     || fail "reviewed upstream v1.0.90 is not an ancestor of HEAD"
-[[ "$(git branch --show-current)" == "x13-hardened" ]] \
-    || fail "unexpected branch"
+case "$(git branch --show-current)" in
+    x13-hardened|reference/gv301qh-xg-mobile) ;;
+    *) fail "unexpected branch" ;;
+esac
 ghelper_set_provenance "$REPO_DIR"
 expected_provenance="$GHELPER_BUILD_PROVENANCE"
 review_mode="$GHELPER_BUILD_MODE"
@@ -457,7 +463,7 @@ shared_nuget="$VERIFY_CACHE_HOME/ghelper-x13-build/$cache_input_hash/nuget"
 [[ -d "$shared_nuget" ]] || fail "canonical external NuGet cache is missing"
 container=(
     "$ENGINE" run --rm --network none
-    --user "$(id -u):$(id -g)"
+    "${container_user_args[@]}"
     --env HOME=/tmp
     --env DOTNET_CLI_HOME=/tmp/ghelper-test-dotnet
     --env NUGET_PACKAGES=/nuget
@@ -601,7 +607,7 @@ context_spoof_case() {
     local name="$1"
     shift
     set +e
-    "$ENGINE" run --rm --network none --user "$(id -u):$(id -g)" \
+    "$ENGINE" run --rm --network none "${container_user_args[@]}" \
         --env HOME=/tmp --volume "$VERIFY_SOURCE:/work:ro" \
         --workdir /work "$@" "$image_id" ./build.sh --print-provenance \
         >"$WORK_DIR/context-$name.log" 2>&1
@@ -665,7 +671,7 @@ coherent_version="$GHELPER_INFORMATIONAL_VERSION"
 printf 'ghelper-phase1-wrapper-v1:%s\n' "$coherent_nonce" > "$coherent_token"
 chmod 400 "$coherent_context" "$coherent_token"
 coherent_guard_output="$($ENGINE run --rm --network none \
-    --user "$(id -u):$(id -g)" --env HOME=/tmp --env NUGET_PACKAGES=/nuget \
+    "${container_user_args[@]}" --env HOME=/tmp --env NUGET_PACKAGES=/nuget \
     --volume "$VERIFY_SOURCE:/work" --volume "$shared_nuget:/nuget:ro" \
     --volume "$coherent_context:/tmp/ghelper-build-context:ro" \
     --volume "$coherent_token:/tmp/ghelper-build-token:ro" \
@@ -778,7 +784,7 @@ if ! wait "$snapshot_pid"; then
     fail "shared-worktree mutation affected isolated compilation"
 fi
 probe_artifact_version="$($ENGINE run --rm --network none \
-    --user "$(id -u):$(id -g)" --env HOME=/tmp \
+    "${container_user_args[@]}" --env HOME=/tmp \
     --volume "$WORK_DIR/mutation-output:/artifact:ro" \
     "$image_id" /artifact/ghelper --print-build-metadata)"
 [[ "$probe_artifact_version" == $'LOCAL-REPRODUCIBLE-UNSIGNED\t'"$staged_probe_version" ]] \
@@ -809,7 +815,7 @@ fi
 replacement_staged_version="$(sed -n 's/^Staged build snapshot: //p' \
     "$replacement_log" | head -n 1)"
 replacement_artifact_version="$($ENGINE run --rm --network none \
-    --user "$(id -u):$(id -g)" --env HOME=/tmp \
+    "${container_user_args[@]}" --env HOME=/tmp \
     --volume "$WORK_DIR/mutation-output:/artifact:ro" \
     "$image_id" /artifact/ghelper --print-build-metadata)"
 [[ "$replacement_artifact_version" == $'LOCAL-REPRODUCIBLE-UNSIGNED\t'"$replacement_staged_version" ]] \
@@ -855,7 +861,7 @@ if ! wait "$cache_pid"; then
 fi
 cache_staged_version="$(sed -n 's/^Staged build snapshot: //p' "$cache_log" | head -n 1)"
 cache_artifact_version="$($ENGINE run --rm --network none \
-    --user "$(id -u):$(id -g)" --env HOME=/tmp \
+    "${container_user_args[@]}" --env HOME=/tmp \
     --volume "$WORK_DIR/cache-mutation-output:/artifact:ro" \
     "$image_id" /artifact/ghelper --print-build-metadata)"
 [[ "$cache_artifact_version" == $'LOCAL-REPRODUCIBLE-UNSIGNED\t'"$cache_staged_version" ]] \
@@ -983,37 +989,42 @@ for config_mode in unset empty relative absolute all-invalid; do
         esac
         output="$WORK_DIR/cli-$config_mode-$invocation.out"
         set +e
+        cli_container=(
+            "$ENGINE" run --rm --network none
+            "${container_user_args[@]}"
+            --env HOME="$case_dir/home"
+            --env LC_ALL=C
+            --env LANG=C
+            --volume "$WORK_DIR:$WORK_DIR"
+            --workdir "$case_dir/cwd"
+        )
         case "$config_mode" in
             unset)
-                (cd "$case_dir/cwd" && env -u XDG_CONFIG_HOME \
-                    -u XDG_CACHE_HOME -u XDG_DATA_HOME \
-                    HOME="$case_dir/home" LC_ALL=C LANG=C \
-                    "$artifact" "${args[@]}") >"$output" 2>&1
+                "${cli_container[@]}" "$image_id" /usr/bin/env \
+                    -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u XDG_DATA_HOME \
+                    "$artifact" "${args[@]}" >"$output" 2>&1
                 ;;
             empty)
-                (cd "$case_dir/cwd" && env HOME="$case_dir/home" XDG_CONFIG_HOME= \
-                    XDG_CACHE_HOME= XDG_DATA_HOME= \
-                    LC_ALL=C LANG=C "$artifact" "${args[@]}") \
-                    >"$output" 2>&1
+                "${cli_container[@]}" --env XDG_CONFIG_HOME= \
+                    --env XDG_CACHE_HOME= --env XDG_DATA_HOME= \
+                    "$image_id" "$artifact" "${args[@]}" >"$output" 2>&1
                 ;;
             relative)
-                (cd "$case_dir/cwd" && env HOME="$case_dir/home" \
-                    XDG_CONFIG_HOME=relative-config XDG_CACHE_HOME=relative-cache \
-                    XDG_DATA_HOME=relative-data LC_ALL=C LANG=C \
-                    "$artifact" "${args[@]}") >"$output" 2>&1
+                "${cli_container[@]}" --env XDG_CONFIG_HOME=relative-config \
+                    --env XDG_CACHE_HOME=relative-cache --env XDG_DATA_HOME=relative-data \
+                    "$image_id" "$artifact" "${args[@]}" >"$output" 2>&1
                 ;;
             absolute)
-                (cd "$case_dir/cwd" && env HOME="$case_dir/home" \
-                    XDG_CONFIG_HOME="$case_dir/config" \
-                    XDG_CACHE_HOME="$case_dir/cache" XDG_DATA_HOME="$case_dir/data" \
-                    LC_ALL=C LANG=C \
-                    "$artifact" "${args[@]}") >"$output" 2>&1
+                "${cli_container[@]}" --env XDG_CONFIG_HOME="$case_dir/config" \
+                    --env XDG_CACHE_HOME="$case_dir/cache" \
+                    --env XDG_DATA_HOME="$case_dir/data" \
+                    "$image_id" "$artifact" "${args[@]}" >"$output" 2>&1
                 ;;
             all-invalid)
-                (cd "$case_dir/cwd" && env HOME=relative-home \
-                    XDG_CONFIG_HOME=relative-config XDG_CACHE_HOME=relative-cache \
-                    XDG_DATA_HOME=relative-data LC_ALL=C LANG=C \
-                    "$artifact" "${args[@]}") >"$output" 2>&1
+                "${cli_container[@]}" --env HOME=relative-home \
+                    --env XDG_CONFIG_HOME=relative-config \
+                    --env XDG_CACHE_HOME=relative-cache --env XDG_DATA_HOME=relative-data \
+                    "$image_id" "$artifact" "${args[@]}" >"$output" 2>&1
                 ;;
         esac
         cli_rc=$?
@@ -1099,8 +1110,8 @@ grep -Fq 'UNATTESTED ghelperd Release publishing is disabled' \
 "${container[@]}" "$image_id" dotnet run \
     --project tests/GHelper.Linux.Tests/GHelper.Linux.Tests.csproj \
     -c Debug --no-restore 2>&1 | tee "$WORK_DIR/csharp.log"
-grep -Fq 'Total:  146' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
-grep -Fq 'Passed: 146' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
+grep -Fq 'Total:  149' "$WORK_DIR/csharp.log" || fail "C# scenario count changed"
+grep -Fq 'Passed: 149' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 grep -Fq 'Failed: 0' "$WORK_DIR/csharp.log" || fail "C# scenarios failed"
 for security_test in \
     AtomicPayload_StaleCacheIsReplaced \

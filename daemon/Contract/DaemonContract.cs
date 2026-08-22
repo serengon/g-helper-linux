@@ -4,8 +4,8 @@ namespace GHelper.Daemon.Contract;
 
 public static class DaemonContract
 {
-    public const uint ApiVersion = 1;
-    public const string DaemonVersion = "1.0.90-x13.2-xg-mvp1";
+    public const uint ApiVersion = 2;
+    public const string DaemonVersion = "1.0.90-x13.2-xg-mvp2";
     public const string ServiceName = "org.ghelper.Daemon1";
     public const string ObjectPath = "/org/ghelper/Daemon1";
     public const string InterfaceName = "org.ghelper.Daemon1";
@@ -17,6 +17,7 @@ public static class DaemonContract
     public const string ErrorTimedOut = InterfaceName + ".Error.TimedOut";
     public const string ErrorCancelled = InterfaceName + ".Error.Cancelled";
     public const string ErrorBusy = InterfaceName + ".Error.Busy";
+    public const string ErrorGpuInUse = InterfaceName + ".Error.GpuInUse";
     public const string ErrorFailed = InterfaceName + ".Error.Failed";
 
     public const string MessageInvalidArguments = "The request arguments are invalid.";
@@ -26,7 +27,14 @@ public static class DaemonContract
     public const string MessageTimedOut = "The request timed out.";
     public const string MessageCancelled = "The request was cancelled.";
     public const string MessageBusy = "The daemon is busy; retry later.";
+    public const string MessageGpuInUse = "The NVIDIA GPU is still in use. Close the listed applications and retry.";
     public const string MessageFailed = "The daemon rejected the request.";
+
+    public const string MutationStateQueued = "queued";
+    public const string MutationStateRunning = "running";
+    public const string MutationStateBlocked = "blocked";
+    public const string MutationStateApplied = "applied";
+    public const string MutationStateFailed = "failed";
 
     public const string StatusState = "ready-x13-gpu-live";
     public const string StatusDetail = "live XG Mobile and internal dGPU Eco/Standard transitions are available; other hardware mutations remain disabled";
@@ -36,6 +44,7 @@ public static class DaemonContract
         "read.version",
         "read.capabilities",
         "read.status",
+        "read.mutation-status",
         "mutate.xg-mode",
         "mutate.dgpu-mode"
     ];
@@ -67,6 +76,17 @@ public static class DaemonContract
           </method>
           <method name="RequestMutation">
             <arg name="operation" type="s" direction="in"/>
+          </method>
+          <method name="StartMutation">
+            <arg name="operation" type="s" direction="in"/>
+            <arg name="job_id" type="s" direction="out"/>
+          </method>
+          <method name="GetMutationStatus">
+            <arg name="job_id" type="s" direction="in"/>
+            <arg name="operation" type="s" direction="out"/>
+            <arg name="state" type="s" direction="out"/>
+            <arg name="detail" type="s" direction="out"/>
+            <arg name="error_name" type="s" direction="out"/>
           </method>
         </interface>
         """;
@@ -129,6 +149,21 @@ public static class DaemonContract
         return segmentHasDigit;
     }
 
+    public static bool IsValidJobId(string? jobId)
+    {
+        if (jobId is null || jobId.Length != 32)
+            return false;
+        foreach (char c in jobId)
+        {
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                return false;
+        }
+        return true;
+    }
+
+    public static bool IsTerminalMutationState(string state)
+        => state is MutationStateBlocked or MutationStateApplied or MutationStateFailed;
+
     public static string GetPublicErrorMessage(string errorName) => errorName switch
     {
         ErrorInvalidArguments => MessageInvalidArguments,
@@ -138,6 +173,7 @@ public static class DaemonContract
         ErrorTimedOut => MessageTimedOut,
         ErrorCancelled => MessageCancelled,
         ErrorBusy => MessageBusy,
+        ErrorGpuInUse => MessageGpuInUse,
         _ => MessageFailed
     };
 }
@@ -145,3 +181,8 @@ public static class DaemonContract
 public readonly record struct MutationDefinition(string Operation, string PolkitAction);
 public readonly record struct DaemonVersionInfo(uint ApiVersion, string DaemonVersion);
 public readonly record struct DaemonStatus(string State, string Detail);
+public readonly record struct MutationJobStatus(
+    string Operation,
+    string State,
+    string Detail,
+    string ErrorName);

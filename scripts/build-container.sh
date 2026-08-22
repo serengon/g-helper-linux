@@ -80,6 +80,9 @@ if [[ "$user_cache_root" != /* ]]; then
     }
     user_cache_root="$HOME/.cache"
 fi
+# Validate before invoking Docker or Podman: container engines may themselves
+# write below XDG_CACHE_HOME and must never see an attacker-controlled symlink.
+python3 "$SCRIPT_DIR/cache-lock-exec.py" validate-root "$user_cache_root"
 
 validate_output_path() {
     local normalized parent parent_mode parent_owner
@@ -179,6 +182,14 @@ command -v "$ENGINE" >/dev/null 2>&1 || {
     exit 1
 }
 
+container_user_args=(--user "$(id -u):$(id -g)")
+if [[ "$(basename -- "$ENGINE")" == "podman" ]]; then
+    # Rootless Podman otherwise interprets --user inside its subordinate-ID
+    # namespace, so bind-mounted cache paths owned by the caller become
+    # unwritable. keep-id maps the caller UID/GID identically in the container.
+    container_user_args=(--userns=keep-id --user "$(id -u):$(id -g)")
+fi
+
 IMAGE_INPUT_HASH="$({
     for input in Containerfile.build .dockerignore global.json Directory.Build.props; do
         printf '%s\0' "$input"
@@ -206,6 +217,12 @@ image_label="$("$ENGINE" image inspect --format \
     exit 1
 }
 IMAGE_ID="$("$ENGINE" image inspect --format '{{.Id}}' "$IMAGE")"
+# Docker prefixes local image IDs with "sha256:" while Podman 5 returns the
+# same 64 hexadecimal characters without the algorithm label. Normalize both
+# to the canonical form used by the build context and artifact manifest.
+if [[ "$IMAGE_ID" =~ ^[0-9a-f]{64}$ ]]; then
+    IMAGE_ID="sha256:$IMAGE_ID"
+fi
 [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || {
     echo "ERROR: invalid immutable image ID: $IMAGE_ID" >&2
     exit 1
@@ -273,7 +290,7 @@ if [[ "$OFFLINE" == "1" ]]; then
 else
     echo "Preparing shared locked NuGet cache (artifact build still uses a private snapshot)..."
     "$ENGINE" run --rm \
-        --user "$(id -u):$(id -g)" \
+        "${container_user_args[@]}" \
         --env HOME=/tmp \
         --env DOTNET_CLI_HOME=/dotnet \
         --env NUGET_PACKAGES=/nuget \
@@ -361,7 +378,7 @@ fi
 set +e
 "$ENGINE" run --rm \
     "${network_args[@]}" \
-    --user "$(id -u):$(id -g)" \
+    "${container_user_args[@]}" \
     --env HOME=/tmp \
     --env XDG_CONFIG_HOME=/tmp/ghelper-build-config \
     --env XDG_CACHE_HOME=/tmp/ghelper-build-cache \

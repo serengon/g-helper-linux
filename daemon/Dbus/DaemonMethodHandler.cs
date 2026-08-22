@@ -54,6 +54,16 @@ public sealed class DaemonMethodHandler : IPathMethodHandler
                     context.DisposesAsynchronously = true;
                     _ = HandleMutationAsync(context, request.SenderAsString, operation);
                     break;
+                case "StartMutation":
+                    RequireSignature(request, "s");
+                    string startOperation = request.GetBodyReader().ReadString();
+                    context.DisposesAsynchronously = true;
+                    _ = HandleStartMutationAsync(context, request.SenderAsString, startOperation);
+                    break;
+                case "GetMutationStatus":
+                    RequireSignature(request, "s");
+                    ReplyMutationStatus(context, request.GetBodyReader().ReadString());
+                    break;
                 default:
                     context.ReplyUnknownMethodError();
                     break;
@@ -104,6 +114,40 @@ public sealed class DaemonMethodHandler : IPathMethodHandler
         }
     }
 
+    private async Task HandleStartMutationAsync(MethodContext context, string? sender, string operation)
+    {
+        using (context)
+        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted))
+        {
+            timeout.CancelAfter(MutationRequestTimeout);
+            try
+            {
+                string jobId = await _core.StartMutationAsync(
+                    sender ?? string.Empty, operation, timeout.Token).ConfigureAwait(false);
+                using MessageWriter writer = context.CreateReplyWriter("s");
+                writer.WriteString(jobId);
+                context.Reply(writer.CreateMessage());
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                ReplyStableError(context, DaemonContract.ErrorCancelled);
+            }
+            catch (OperationCanceledException)
+            {
+                ReplyStableError(context, DaemonContract.ErrorTimedOut);
+            }
+            catch (DaemonRequestException ex)
+            {
+                ReplyStableError(context, ex.ErrorName);
+            }
+            catch (Exception)
+            {
+                Console.Error.WriteLine("ghelperd mutation start failed (internal error).");
+                ReplyStableError(context, DaemonContract.ErrorFailed);
+            }
+        }
+    }
+
     private static void RequireSignature(Message request, string expected)
     {
         if (!string.Equals(request.SignatureAsString ?? string.Empty, expected, StringComparison.Ordinal))
@@ -140,6 +184,17 @@ public sealed class DaemonMethodHandler : IPathMethodHandler
         using MessageWriter writer = context.CreateReplyWriter("ss");
         writer.WriteString(status.State);
         writer.WriteString(status.Detail);
+        context.Reply(writer.CreateMessage());
+    }
+
+    private void ReplyMutationStatus(MethodContext context, string jobId)
+    {
+        MutationJobStatus status = _core.GetMutationStatus(jobId);
+        using MessageWriter writer = context.CreateReplyWriter("ssss");
+        writer.WriteString(status.Operation);
+        writer.WriteString(status.State);
+        writer.WriteString(status.Detail);
+        writer.WriteString(status.ErrorName);
         context.Reply(writer.CreateMessage());
     }
 }

@@ -178,6 +178,11 @@ public static class Korean
         ["gpu_kill_failure_body"] = "GPU 전환이 중단되었습니다. 다음 프로세스를 중지할 수 없습니다:",
         ["gpu_kill_failure_retry"] = "다시 시도",
         ["gpu_refresh"] = "새로 고침",
+        ["gpu_preflight_body"] = "The GPU cannot switch while these applications keep NVIDIA devices open. Close them normally, use Close/Force kill if needed, then retry.",
+        ["gpu_preflight_retry"] = "Retry",
+        ["gpu_preflight_continue"] = "Continue",
+        ["gpu_preflight_ready"] = "No NVIDIA device holders remain. Continue with the GPU transition.",
+        ["gpu_kill_tree_warning"] = "Related child processes may also close. If this is your terminal, closing it will end every task running inside it.",
 
         // KEYBOARD NOTIFICATIONS
         ["kbd_off"] = "끄기  \u25cb\u25cb\u25cb",

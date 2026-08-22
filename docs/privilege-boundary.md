@@ -14,6 +14,8 @@ on the system D-Bus.
 - Enabled internal dGPU mutation: `enable-dgpu-mode` / `disable-dgpu-mode`
 - Polkit actions: `org.ghelper.daemon.set-xg-mode` and
   `org.ghelper.daemon.set-gpu-mode`
+- Observable mutation API: `StartMutation(operation) -> job_id` and
+  `GetMutationStatus(job_id)`
 
 The daemon takes the unique D-Bus sender from the received message and resolves
 its UID/PID through the bus. Polkit authorizes that unique bus name as the active
@@ -23,7 +25,8 @@ session without a password prompt; inactive and remote sessions remain denied.
 
 The XG executor is intentionally model-specific. It requires a GV301QH, the ASUS
 `egpu_connected` and `egpu_enable` attributes, exactly one visible NVIDIA GPU,
-and no process retaining `/dev/nvidia*`. It never kills an application. It owns
+and no process retaining NVIDIA, NVIDIA-owned DRM, or NVIDIA I2C device nodes.
+It never kills an application. It owns
 NVIDIA module release, HDMI-audio unbind, ASUS WMI transition, XG HID reports,
 PCI rescan, and final endpoint verification.
 
@@ -34,6 +37,21 @@ NVIDIA modules and HDMI-audio function before Eco, and verifies firmware, PCI
 presence, and NVIDIA driver binding before reporting success. MUX support is a
 separate capability: the GUI exposes Ultimate only when the firmware publishes
 `gpu_mux_mode`; no model name is hardcoded to manufacture or suppress it.
+
+Before requesting either transition, the GUI scans the same device classes and
+opens a modal preflight when an application is holding the GPU. The user can
+cancel, close a process gracefully, force-close it after an explicit warning,
+or retry. Process termination is never automatic. The daemon performs a
+best-effort repeat scan before queueing. Its systemd sandbox deliberately lacks
+`CAP_SYS_PTRACE`, so procfs can hide desktop-user descriptors from that scan;
+the authoritative final gate is NVIDIA module release, still before any ACPI
+write. A holder found by either gate becomes the stable `GpuInUse` result.
+
+Accepted operations receive an opaque job ID. Status progresses through
+`queued`, `running`, and one terminal state: `applied`, `blocked`, or `failed`.
+The GUI follows that state instead of assuming that a fire-and-forget request
+succeeded or waiting a fixed delay. The original `RequestMutation` method stays
+available for compatibility, but new GPU UI paths use the observable API.
 
 ## Installed system assets
 
@@ -107,5 +125,5 @@ subsequently reconnected but left inactive, firmware reported 1/0 and its
 `0b05:1970` HID appeared without disturbing the internal GPU. No task entered
 uninterruptible sleep. The active `andres` session also completed an authorized
 no-op Standard request without a password prompt. The implementation passed
-146/146 C# scenarios, 93/93 boot scenarios, 12/12 audio integration tests, and
+149/149 C# scenarios, 93/93 boot scenarios, 12/12 audio integration tests, and
 the two-build Native AOT reproducibility check.

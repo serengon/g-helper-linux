@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Text;
 using GHelper.Daemon.Contract;
 using GHelper.Daemon.Core;
@@ -18,24 +19,51 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
     private const string PciRescanPath = "/sys/bus/pci/rescan";
     private const string InternalNvidiaDeviceId = "0x1f9d";
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
+    private readonly ConcurrentDictionary<string, JobEntry> _jobs = new(StringComparer.Ordinal);
     private int _transitionRunning;
+
+    private sealed record JobEntry(MutationJobStatus Status, long UpdatedTicks);
+    private sealed class NvidiaGpuInUseException : InvalidOperationException
+    {
+        public NvidiaGpuInUseException(string message) : base(message) { }
+        public NvidiaGpuInUseException(string message, Exception? inner) : base(message, inner) { }
+    }
 
     public bool CanExecute(MutationDefinition mutation)
         => mutation.Operation is EnableOperation or DisableOperation
             or EnableDgpuOperation or DisableDgpuOperation;
 
-    public bool TryQueue(MutationDefinition mutation)
+    public MutationQueueResult TryQueue(MutationDefinition mutation)
     {
         if (!CanExecute(mutation)
             || Interlocked.CompareExchange(ref _transitionRunning, 1, 0) != 0)
-            return false;
+            return MutationQueueResult.Busy();
+
+        bool requiresNvidiaRelease = mutation.Operation is EnableOperation
+            or DisableOperation or DisableDgpuOperation;
+        if (requiresNvidiaRelease)
+        {
+            NvidiaDeviceHolderScanner.Holder[] holders = NvidiaDeviceHolderScanner.FindHolders();
+            if (holders.Length > 0)
+            {
+                Console.Error.WriteLine(
+                    $"GPU transition preflight blocked by NVIDIA holders: {string.Join(", ", holders.AsEnumerable())}.");
+                Volatile.Write(ref _transitionRunning, 0);
+                return MutationQueueResult.GpuInUse();
+            }
+        }
 
         bool xgOperation = mutation.Operation is EnableOperation or DisableOperation;
         bool enable = mutation.Operation is EnableOperation or EnableDgpuOperation;
+        string jobId = Guid.NewGuid().ToString("N");
+        SetJob(jobId, mutation.Operation, DaemonContract.MutationStateQueued,
+            "The transition is queued.", string.Empty);
         _ = Task.Run(async () =>
         {
             try
             {
+                SetJob(jobId, mutation.Operation, DaemonContract.MutationStateRunning,
+                    "The hardware transition is running.", string.Empty);
                 if (xgOperation)
                 {
                     await ExecuteTransitionAsync(enable).ConfigureAwait(false);
@@ -46,19 +74,62 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
                     await ExecuteDgpuTransitionAsync(enable).ConfigureAwait(false);
                     Console.WriteLine($"Internal dGPU live transition completed: enabled={enable}.");
                 }
+                SetJob(jobId, mutation.Operation, DaemonContract.MutationStateApplied,
+                    "The requested hardware state was applied.", string.Empty);
+            }
+            catch (NvidiaGpuInUseException ex)
+            {
+                Console.Error.WriteLine(
+                    $"{(xgOperation ? "XG Mobile" : "Internal dGPU")} live transition blocked: {ex.Message}");
+                SetJob(jobId, mutation.Operation, DaemonContract.MutationStateBlocked,
+                    DaemonContract.MessageGpuInUse, DaemonContract.ErrorGpuInUse);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine(
                     $"{(xgOperation ? "XG Mobile" : "Internal dGPU")} live transition failed "
                     + $"({ex.GetType().Name}): {ex.Message}");
+                SetJob(jobId, mutation.Operation, DaemonContract.MutationStateFailed,
+                    DaemonContract.MessageFailed, DaemonContract.ErrorFailed);
             }
             finally
             {
                 Volatile.Write(ref _transitionRunning, 0);
             }
         });
-        return true;
+        return MutationQueueResult.Queued(jobId);
+    }
+
+    public bool TryGetStatus(string jobId, out MutationJobStatus status)
+    {
+        if (_jobs.TryGetValue(jobId, out JobEntry? entry))
+        {
+            status = entry.Status;
+            return true;
+        }
+        status = default;
+        return false;
+    }
+
+    private void SetJob(
+        string jobId,
+        string operation,
+        string state,
+        string detail,
+        string errorName)
+    {
+        _jobs[jobId] = new JobEntry(
+            new MutationJobStatus(operation, state, detail, errorName),
+            DateTime.UtcNow.Ticks);
+        if (_jobs.Count <= 32)
+            return;
+        foreach (var stale in _jobs
+            .Where(pair => DaemonContract.IsTerminalMutationState(pair.Value.Status.State))
+            .OrderBy(pair => pair.Value.UpdatedTicks)
+            .Take(_jobs.Count - 32))
+        {
+            _jobs.TryRemove(stale.Key, out _);
+        }
     }
 
     private static async Task ExecuteTransitionAsync(bool enable)
@@ -281,7 +352,10 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
         }
 
         string remaining = string.Join(", ", order.Where(IsModuleLoaded));
-        throw new InvalidOperationException(
+        // The root service deliberately lacks CAP_SYS_PTRACE, so procfs may
+        // hide desktop-user FDs from the best-effort pre-scan. Module removal
+        // is the authoritative final gate and still runs before any ACPI write.
+        throw new NvidiaGpuInUseException(
             $"NVIDIA modules are still in use ({remaining}); XG state was not changed.", last);
     }
 
@@ -295,36 +369,14 @@ public sealed class XgMobileMutationExecutor : IMutationExecutor
                 return;
             await Task.Delay(500).ConfigureAwait(false);
         }
-        throw new InvalidOperationException(
+        throw new NvidiaGpuInUseException(
             $"NVIDIA device nodes are still open: {string.Join(", ", FindNvidiaDeviceHolders())}.");
     }
 
     private static string[] FindNvidiaDeviceHolders()
-    {
-        var holders = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string processDir in Directory.EnumerateDirectories("/proc"))
-        {
-            string pid = Path.GetFileName(processDir);
-            if (!pid.All(char.IsAsciiDigit))
-                continue;
-            string fdDir = Path.Combine(processDir, "fd");
-            try
-            {
-                foreach (string fd in Directory.EnumerateFiles(fdDir))
-                {
-                    string? target = new FileInfo(fd).LinkTarget;
-                    if (target is not null && target.StartsWith("/dev/nvidia", StringComparison.Ordinal))
-                    {
-                        string comm = TryRead(Path.Combine(processDir, "comm"))?.Trim() ?? "?";
-                        holders.Add($"{pid}/{comm}");
-                    }
-                }
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
-        return holders.Order(StringComparer.Ordinal).ToArray();
-    }
+        => NvidiaDeviceHolderScanner.FindHolders()
+            .Select(holder => holder.ToString())
+            .ToArray();
 
     private static async Task TryRestorePreviousStateAsync(bool enabled)
     {

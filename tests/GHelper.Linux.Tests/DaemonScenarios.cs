@@ -3,6 +3,7 @@ using GHelper.Daemon.Contract;
 using GHelper.Daemon.Core;
 using GHelper.Daemon.DBus;
 using GHelper.Daemon.Hosting;
+using GHelper.Daemon.Hardware;
 using GHelper.Linux.Daemon;
 using Tmds.DBus.Protocol;
 using static GHelper.Linux.Tests.Harness;
@@ -23,6 +24,9 @@ public static class DaemonScenarios
         AuthorizedMutation_StillHasNoExecutor();
         AuthorizedXgMutation_IsQueuedAfterPolkit();
         AuthorizedDgpuMutation_IsQueuedAfterPolkit();
+        StartMutation_ReturnsObservableJobStatus();
+        GpuInUse_FailsWithStableError();
+        NvidiaHolderScanner_DetectsPtyxisFixture();
         InvalidSender_FailsBeforeIdentityLookupWhenEnabled();
         FutureMutationPipeline_IsBounded();
         BoundedTransport_RetainsSlotUntilCancelledCallCompletes();
@@ -39,10 +43,14 @@ public static class DaemonScenarios
     private static void Contract_IsVersionedAndIntrospectable()
         => Scenario(nameof(Contract_IsVersionedAndIntrospectable), _ =>
         {
-            AssertEqual(1u, DaemonContract.ApiVersion, "daemon API version");
+            AssertEqual(2u, DaemonContract.ApiVersion, "daemon API version");
             Assert(DaemonContract.InterfaceName.EndsWith("1", StringComparison.Ordinal),
                 "D-Bus interface name is not major-versioned");
-            foreach (string method in new[] { "GetVersion", "GetCapabilities", "GetStatus", "RequestMutation" })
+            foreach (string method in new[]
+            {
+                "GetVersion", "GetCapabilities", "GetStatus", "RequestMutation",
+                "StartMutation", "GetMutationStatus"
+            })
                 Assert(DaemonContract.IntrospectionXml.Contains($"method name=\"{method}\"", StringComparison.Ordinal),
                     $"introspection omits {method}");
         });
@@ -63,7 +71,7 @@ public static class DaemonScenarios
         {
             var core = NewCore(out _, out _);
             string[] first = core.GetCapabilities();
-            Assert(first.Length == 5, "unexpected daemon capability count");
+            Assert(first.Length == 6, "unexpected daemon capability count");
             Assert(first.Count(c => c.StartsWith("mutate.", StringComparison.Ordinal)) == 2
                 && first.Contains("mutate.xg-mode", StringComparer.Ordinal)
                 && first.Contains("mutate.dgpu-mode", StringComparer.Ordinal),
@@ -166,6 +174,82 @@ public static class DaemonScenarios
             AssertEqual(1, authorization.Calls, "dGPU authorization count");
             AssertEqual(1, executor.QueueCalls, "dGPU queue count");
             AssertEqual("disable-dgpu-mode", executor.LastOperation!, "queued dGPU operation");
+        });
+
+    private static void StartMutation_ReturnsObservableJobStatus()
+        => Scenario(nameof(StartMutation_ReturnsObservableJobStatus), _ =>
+        {
+            var executor = new FakeMutationExecutor("disable-xg-mode");
+            var core = new DaemonCore(
+                new FakeIdentityResolver(),
+                new FakeAuthorization { Result = true },
+                mutationExecutionEnabled: true,
+                mutationExecutor: executor);
+            string jobId = core.StartMutationAsync(":1.2", "disable-xg-mode", default)
+                .AsTask().GetAwaiter().GetResult();
+            AssertEqual(FakeMutationExecutor.JobId, jobId, "start mutation job id");
+            MutationJobStatus status = core.GetMutationStatus(jobId);
+            AssertEqual("disable-xg-mode", status.Operation, "status operation");
+            AssertEqual(DaemonContract.MutationStateQueued, status.State, "status state");
+        });
+
+    private static void GpuInUse_FailsWithStableError()
+        => Scenario(nameof(GpuInUse_FailsWithStableError), _ =>
+        {
+            var executor = new FakeMutationExecutor("enable-xg-mode")
+            {
+                QueueResult = MutationQueueResult.GpuInUse()
+            };
+            var core = new DaemonCore(
+                new FakeIdentityResolver(),
+                new FakeAuthorization { Result = true },
+                mutationExecutionEnabled: true,
+                mutationExecutor: executor);
+            DaemonRequestException ex = CaptureRequest(() =>
+                core.StartMutationAsync(":1.2", "enable-xg-mode", default)
+                    .AsTask().GetAwaiter().GetResult());
+            AssertEqual(DaemonContract.ErrorGpuInUse, ex.ErrorName, "GPU holder error");
+            AssertEqual(DaemonContract.MessageGpuInUse,
+                DaemonMethodHandler.PublicErrorMessage(ex.ErrorName),
+                "GPU holder public message");
+        });
+
+    private static void NvidiaHolderScanner_DetectsPtyxisFixture()
+        => Scenario(nameof(NvidiaHolderScanner_DetectsPtyxisFixture), sandbox =>
+        {
+            string root = Path.Combine(sandbox.TempRoot, "ptyxis-holder-fixture");
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+            string procRoot = Path.Combine(root, "proc");
+            string devRoot = Path.Combine(root, "dev");
+            string sysRoot = Path.Combine(root, "sys");
+            string fdRoot = Path.Combine(procRoot, "26020", "fd");
+            string driRoot = Path.Combine(devRoot, "dri");
+            string drmDevice = Path.Combine(sysRoot, "class", "drm", "renderD128", "device");
+            string i2cAdapter = Path.Combine(sysRoot, "bus", "i2c", "devices", "i2c-4");
+            Directory.CreateDirectory(fdRoot);
+            Directory.CreateDirectory(driRoot);
+            Directory.CreateDirectory(drmDevice);
+            Directory.CreateDirectory(i2cAdapter);
+            File.WriteAllText(Path.Combine(procRoot, "26020", "comm"), "ptyxis\n");
+            string nvidia0 = Path.Combine(devRoot, "nvidia0");
+            string renderD128 = Path.Combine(driRoot, "renderD128");
+            string i2c4 = Path.Combine(devRoot, "i2c-4");
+            File.WriteAllText(nvidia0, string.Empty);
+            File.WriteAllText(renderD128, string.Empty);
+            File.WriteAllText(i2c4, string.Empty);
+            File.WriteAllText(Path.Combine(drmDevice, "vendor"), "0x10de\n");
+            File.WriteAllText(Path.Combine(i2cAdapter, "name"), "NVIDIA i2c adapter 4\n");
+            File.CreateSymbolicLink(Path.Combine(fdRoot, "11"), nvidia0);
+            File.CreateSymbolicLink(Path.Combine(fdRoot, "12"), renderD128);
+            File.CreateSymbolicLink(Path.Combine(fdRoot, "13"), i2c4);
+
+            NvidiaDeviceHolderScanner.Holder[] holders =
+                NvidiaDeviceHolderScanner.FindHolders(procRoot, devRoot, sysRoot);
+            AssertEqual(1, holders.Length, "Ptyxis holder count");
+            AssertEqual(26020, holders[0].Pid, "Ptyxis PID");
+            AssertEqual("ptyxis", holders[0].Comm, "Ptyxis comm");
+            AssertEqual(3, holders[0].DeviceFdCount, "Ptyxis GPU FD count");
         });
 
     private static void InvalidSender_FailsBeforeIdentityLookupWhenEnabled()
@@ -346,6 +430,7 @@ public static class DaemonScenarios
                 DaemonContract.ErrorTimedOut,
                 DaemonContract.ErrorCancelled,
                 DaemonContract.ErrorBusy,
+                DaemonContract.ErrorGpuInUse,
                 DaemonContract.ErrorFailed
             })
             {
@@ -472,17 +557,34 @@ public static class DaemonScenarios
 
     private sealed class FakeMutationExecutor(string supportedOperation) : IMutationExecutor
     {
+        public const string JobId = "11111111111111111111111111111111";
         public int QueueCalls { get; private set; }
         public string? LastOperation { get; private set; }
+        public MutationQueueResult QueueResult { get; init; } = MutationQueueResult.Queued(JobId);
 
         public bool CanExecute(MutationDefinition mutation)
             => mutation.Operation == supportedOperation;
 
-        public bool TryQueue(MutationDefinition mutation)
+        public MutationQueueResult TryQueue(MutationDefinition mutation)
         {
             QueueCalls++;
             LastOperation = mutation.Operation;
-            return true;
+            return QueueResult;
+        }
+
+        public bool TryGetStatus(string jobId, out MutationJobStatus status)
+        {
+            if (jobId == JobId)
+            {
+                status = new MutationJobStatus(
+                    supportedOperation,
+                    DaemonContract.MutationStateQueued,
+                    "queued",
+                    string.Empty);
+                return true;
+            }
+            status = default;
+            return false;
         }
     }
 

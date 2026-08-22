@@ -6,7 +6,7 @@
 
 <div align="center">
 
-[![GitHub Release](https://img.shields.io/github/v/release/utajum/g-helper-linux?style=for-the-badge&color=4a9eff)](https://github.com/utajum/g-helper-linux/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/utajum/g-helper-linux?style=for-the-badge&color=4a9eff)](https://github.com/utajum/g-helper-linux/releases)
 [![Total Binary Downloads](https://img.shields.io/github/downloads/utajum/g-helper-linux/ghelper?style=for-the-badge&color=28c840&label=total%20binary%20downloads)](https://github.com/utajum/g-helper-linux/releases)
 [![Total AppImage Downloads](https://img.shields.io/github/downloads/utajum/g-helper-linux/GHelper-x86_64.AppImage?style=for-the-badge&color=28c840&label=total%20appimage%20downloads)](https://github.com/utajum/g-helper-linux/releases)
 [![License](https://img.shields.io/github/license/utajum/g-helper-linux?style=for-the-badge&color=a0c8ff)](https://github.com/utajum/g-helper-linux/blob/master/LICENSE)
@@ -237,6 +237,13 @@ supported model, ASUS firmware attributes, and the targeted XG root-port PM
 policy are all detected. Uninstalled build artifacts still exit with code 64. The explicit
 `--poc-readonly`, `--poc-functional`, and `--poc-smoke` modes remain available
 for development and fail-closed testing.
+
+GPU switching now performs an application-holder preflight before touching
+hardware. It identifies `/dev/nvidia*`, NVIDIA DRM, and NVIDIA I2C users, lets
+the user close or force-close them explicitly, and retries without silently
+killing anything. The root daemon repeats the check to close the race and
+exposes observable mutation jobs, so the GUI reports a terminal hardware result
+instead of treating queue acceptance or a fixed timeout as success.
 
 The application identifies itself as `1.0.90-x13.2`. Runtime self-update,
 self-install, self-repair, and self-removal inside the GUI remain disabled. The

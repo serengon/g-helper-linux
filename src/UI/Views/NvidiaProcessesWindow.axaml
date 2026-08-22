@@ -34,7 +34,7 @@
         </Style>
     </Window.Styles>
 
-    <Grid Margin="12" RowDefinitions="Auto,*">
+    <Grid Margin="12" RowDefinitions="Auto,*,Auto">
 
         <Border Grid.Row="0" Classes="panel">
             <Grid ColumnDefinitions="*,Auto">
@@ -57,6 +57,22 @@
                       Margin="0,8,0,0">
             <StackPanel x:Name="panelProcessList" Spacing="4" Margin="0,0,2,0" />
         </ScrollViewer>
+
+        <Border Grid.Row="2" x:Name="panelPreflight" Classes="panel"
+                IsVisible="False" Margin="0,8,0,0">
+            <Grid RowDefinitions="Auto,Auto">
+                <TextBlock Grid.Row="0" x:Name="labelPreflight"
+                           TextWrapping="Wrap" FontSize="12"
+                           Foreground="#E0A040" Margin="0,0,0,10" />
+                <StackPanel Grid.Row="1" Orientation="Horizontal"
+                            HorizontalAlignment="Right" Spacing="8">
+                    <Button x:Name="buttonPreflightCancel" Classes="ghelper"
+                            Click="ButtonPreflightCancel_Click" Padding="12,6" />
+                    <Button x:Name="buttonPreflightRetry" Classes="ghelper"
+                            Click="ButtonPreflightRetry_Click" Padding="12,6" />
+                </StackPanel>
+            </Grid>
+        </Border>
 
     </Grid>
 </Window>

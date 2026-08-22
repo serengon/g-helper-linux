@@ -47,6 +47,7 @@ public static class NvidiaProcessScanner
 
     private static readonly object _privCacheLock = new();
     private static List<string> _filteredSystemCache = new();
+    private static List<string> _lastLoggedSystemSnapshot = new();
 
     /// <summary>
     /// Formatted strings for system processes filtered from the last scan.
@@ -191,9 +192,15 @@ public static class NvidiaProcessScanner
 
         // Unprivileged path has no separate cache; store filtered list so
         // LogHoldersSnapshot can pick it up via GetFilteredSystemProcesses().
+        bool filteredSnapshotChanged;
         lock (_privCacheLock)
+        {
+            filteredSnapshotChanged = !_lastLoggedSystemSnapshot.SequenceEqual(sysFiltered);
             _filteredSystemCache = sysFiltered;
-        if (sysFiltered.Count > 0)
+            if (filteredSnapshotChanged)
+                _lastLoggedSystemSnapshot = sysFiltered.ToList();
+        }
+        if (filteredSnapshotChanged && sysFiltered.Count > 0)
             Helpers.Logger.WriteLine($"NvidiaProcessScanner: system holders (won't kill): [{string.Join(", ", sysFiltered)}]");
 
         return new List<NvidiaHolder>(holders.Values);

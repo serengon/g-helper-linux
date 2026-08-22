@@ -175,6 +175,11 @@ public static class Russian
         ["gpu_kill_failure_body"] = "Переключение GPU отменено. Не удалось остановить следующие процессы:",
         ["gpu_kill_failure_retry"] = "Повторить",
         ["gpu_refresh"] = "Обновить",
+        ["gpu_preflight_body"] = "The GPU cannot switch while these applications keep NVIDIA devices open. Close them normally, use Close/Force kill if needed, then retry.",
+        ["gpu_preflight_retry"] = "Retry",
+        ["gpu_preflight_continue"] = "Continue",
+        ["gpu_preflight_ready"] = "No NVIDIA device holders remain. Continue with the GPU transition.",
+        ["gpu_kill_tree_warning"] = "Related child processes may also close. If this is your terminal, closing it will end every task running inside it.",
 
         // KEYBOARD NOTIFICATIONS
         ["kbd_off"] = "Выкл  \u25cb\u25cb\u25cb",

@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
+using GHelper.Daemon.Contract;
 using GHelper.Linux.Gpu;
 using GHelper.Linux.Gpu.NVidia;
 using GHelper.Linux.Daemon;
@@ -818,20 +819,32 @@ public partial class MainWindow : Window
             return;
         }
 
+        string operation = target == GpuMode.Eco
+            ? "disable-dgpu-mode"
+            : "enable-dgpu-mode";
+        if (!await EnsureNvidiaTransitionReadyAsync(operation))
+        {
+            RefreshGpuMode();
+            return;
+        }
+
         LockGpuButtons(switchingText ?? (target == GpuMode.Eco
             ? Labels.Get("gpu_switching_eco")
             : Labels.Get("gpu_switching_standard")));
         GpuQueryGate.Hold("installed internal dGPU transition");
         try
         {
-            string operation = target == GpuMode.Eco
-                ? "disable-dgpu-mode"
-                : "enable-dgpu-mode";
             using var daemon = await GHelperDaemonClient.ConnectSystemAsync();
-            await daemon.RequestMutationAsync(operation);
-            Helpers.Logger.WriteLine($"Installed dGPU transition queued ({operation})");
+            string jobId = await daemon.StartMutationAsync(operation);
+            Helpers.Logger.WriteLine(
+                $"Installed dGPU transition queued ({operation}, job={jobId})");
+            MutationJobStatus job = await daemon.WaitForMutationAsync(
+                jobId, TimeSpan.FromSeconds(110));
+            EnsureMutationApplied(job);
+            Helpers.Logger.WriteLine(
+                $"Installed dGPU daemon transition applied ({operation}, job={jobId})");
 
-            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(90);
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
             while (DateTime.UtcNow < deadline)
             {
                 var disablePath = SysfsHelper.ResolveAttrPath(
@@ -2771,6 +2784,14 @@ public partial class MainWindow : Window
             }
         }
 
+        string liveOperation = currentlyEnabled ? "disable-xg-mode" : "enable-xg-mode";
+        if (RuntimeMode.IsPocFunctional
+            && !await EnsureNvidiaTransitionReadyAsync(liveOperation))
+        {
+            RefreshXgMobile();
+            return;
+        }
+
         if (RuntimeMode.IsPocFunctional)
         {
             _xgmToggling = true;
@@ -2778,14 +2799,19 @@ public partial class MainWindow : Window
             RefreshXgMobile();
             try
             {
-                string operation = currentlyEnabled ? "disable-xg-mode" : "enable-xg-mode";
                 using var daemon = await GHelperDaemonClient.ConnectSystemAsync();
-                await daemon.RequestMutationAsync(operation);
-                Helpers.Logger.WriteLine($"XGMobile: live transition queued ({operation})");
+                string jobId = await daemon.StartMutationAsync(liveOperation);
+                Helpers.Logger.WriteLine(
+                    $"XGMobile: live transition queued ({liveOperation}, job={jobId})");
+                MutationJobStatus job = await daemon.WaitForMutationAsync(
+                    jobId, TimeSpan.FromSeconds(110));
+                EnsureMutationApplied(job);
+                Helpers.Logger.WriteLine(
+                    $"XGMobile: daemon transition applied ({liveOperation}, job={jobId})");
                 await WaitForXgmTransitionAsync(
                     targetEnabled: !currentlyEnabled,
                     initialPciSignature);
-                Helpers.Logger.WriteLine($"XGMobile: live transition completed ({operation})");
+                Helpers.Logger.WriteLine($"XGMobile: live transition completed ({liveOperation})");
                 App.System?.ShowNotification(
                     Labels.Get("xgm_label"),
                     !currentlyEnabled
@@ -2954,18 +2980,9 @@ public partial class MainWindow : Window
                 await Task.Delay(TimeSpan.FromSeconds(1));
                 if (GetNvidiaDisplayPciSignature() == pciSignature)
                 {
-                    if (targetEnabled)
-                    {
-                        // The endpoint appears before the daemon finishes the
-                        // official 15 second HID/PCI settle and driver load.
-                        // Resuming nvidia-smi earlier can wedge the query gate
-                        // even though the transition completes successfully.
-                        Helpers.Logger.WriteLine(
-                            "XGMobile: endpoint present; waiting for daemon settle");
-                        await Task.Delay(TimeSpan.FromSeconds(16));
-                        if (GetNvidiaDisplayPciSignature() != pciSignature)
-                            continue;
-                    }
+                    // StartMutation is terminal only after the daemon finishes
+                    // HID/PCI settling and driver load. This readback therefore
+                    // confirms stability without the old blind 16-second wait.
                     return;
                 }
             }
@@ -2974,6 +2991,35 @@ public partial class MainWindow : Window
         }
 
         throw new TimeoutException("XG Mobile did not reach the requested hardware state.");
+    }
+
+    private async Task<bool> EnsureNvidiaTransitionReadyAsync(string operation)
+    {
+        bool requiresNvidiaRelease = operation is "enable-xg-mode"
+            or "disable-xg-mode" or "disable-dgpu-mode";
+        if (!requiresNvidiaRelease)
+            return true;
+
+        NvidiaProcessScanner.InvalidateScanCache();
+        if (!NvidiaProcessScanner.ScanHolders().Any(holder => holder.BlocksUnload))
+            return true;
+
+        Helpers.Logger.WriteLine(
+            $"GPU transition preflight opened for {operation}: NVIDIA holders detected");
+        bool ready = await NvidiaProcessesWindow.ShowPreflightAsync(this);
+        Helpers.Logger.WriteLine(
+            $"GPU transition preflight closed for {operation}: ready={ready}");
+        return ready;
+    }
+
+    private static void EnsureMutationApplied(MutationJobStatus status)
+    {
+        if (status.State == DaemonContract.MutationStateApplied)
+            return;
+        string detail = string.IsNullOrWhiteSpace(status.Detail)
+            ? DaemonContract.MessageFailed
+            : status.Detail;
+        throw new InvalidOperationException(detail);
     }
 
     private static string GetNvidiaDisplayPciSignature()

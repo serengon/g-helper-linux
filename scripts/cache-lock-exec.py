@@ -180,6 +180,13 @@ def validate_held(arguments: list[str]) -> None:
         validate_dir_stat(os.fstat(descriptor), "persistent cache component")
 
 
+def validate_root(arguments: list[str]) -> None:
+    if len(arguments) != 1:
+        fail("validate-root requires the persistent cache root")
+    descriptor = open_root(arguments[0])
+    os.close(descriptor)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         fail("missing cache-lock operation")
@@ -188,6 +195,8 @@ def main() -> None:
         lock_and_exec(arguments)
     elif operation == "validate-held":
         validate_held(arguments)
+    elif operation == "validate-root":
+        validate_root(arguments)
     else:
         fail("unknown cache-lock operation")
 

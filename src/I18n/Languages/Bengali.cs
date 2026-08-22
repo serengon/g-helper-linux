@@ -178,6 +178,11 @@ public static class Bengali
         ["gpu_kill_failure_body"] = "GPU সুইচ বাতিল হয়েছে। নিম্নলিখিত প্রক্রিয়াগুলো থামানো যায়নি:",
         ["gpu_kill_failure_retry"] = "পুনরায় চেষ্টা করুন",
         ["gpu_refresh"] = "রিফ্রেশ",
+        ["gpu_preflight_body"] = "The GPU cannot switch while these applications keep NVIDIA devices open. Close them normally, use Close/Force kill if needed, then retry.",
+        ["gpu_preflight_retry"] = "Retry",
+        ["gpu_preflight_continue"] = "Continue",
+        ["gpu_preflight_ready"] = "No NVIDIA device holders remain. Continue with the GPU transition.",
+        ["gpu_kill_tree_warning"] = "Related child processes may also close. If this is your terminal, closing it will end every task running inside it.",
 
         // KEYBOARD NOTIFICATIONS
         ["kbd_off"] = "বন্ধ  \u25cb\u25cb\u25cb",
