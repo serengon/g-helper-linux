@@ -698,6 +698,11 @@
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center" />
                     </Grid>
+                    <!-- Boot parameter hint. Selectable so it can be copied. -->
+                    <SelectableTextBlock x:Name="labelXgmPciePmHint"
+                                         Classes="label-dim" FontSize="10"
+                                         TextWrapping="Wrap" TextTrimming="None"
+                                         Text="" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
 

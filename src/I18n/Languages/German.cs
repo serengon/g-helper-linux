@@ -747,6 +747,7 @@ public static class German
         ["xgm_extra_header"] = "XG-Mobile-Dock",
         ["xgm_extra_lights_label"] = "Dock-Beleuchtung",
         ["xgm_extra_brightness_label"] = "Helligkeit",
+        ["xgm_pcie_pm_hint"] = "Wenn das Umschalten im Betrieb hängt, pcie_port_pm=off zur Kernel-Befehlszeile hinzufügen.",
         ["xgm_fan"] = "XG-Mobile-Lüfter",
         ["confirm_yes"] = "Ja",
         ["confirm_no"] = "Nein",

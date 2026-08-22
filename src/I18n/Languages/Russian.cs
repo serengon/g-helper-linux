@@ -747,6 +747,7 @@ public static class Russian
         ["xgm_extra_header"] = "Док-станция XG Mobile",
         ["xgm_extra_lights_label"] = "Подсветка дока",
         ["xgm_extra_brightness_label"] = "Яркость",
+        ["xgm_pcie_pm_hint"] = "Если переключение на ходу зависает, добавьте pcie_port_pm=off в командную строку ядра.",
         ["xgm_fan"] = "Вентилятор XG Mobile",
         ["confirm_yes"] = "Да",
         ["confirm_no"] = "Нет",

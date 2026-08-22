@@ -747,6 +747,7 @@ public static class Hungarian
         ["xgm_extra_header"] = "XG Mobile dokkoló",
         ["xgm_extra_lights_label"] = "Dokkoló fények",
         ["xgm_extra_brightness_label"] = "Fényerő",
+        ["xgm_pcie_pm_hint"] = "Ha a menet közbeni váltás megakad, add hozzá a pcie_port_pm=off paramétert a kernel parancssorához.",
         ["xgm_fan"] = "XG Mobile ventilátor",
         ["confirm_yes"] = "Igen",
         ["confirm_no"] = "Nem",

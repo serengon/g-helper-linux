@@ -750,6 +750,7 @@ public static class ChineseSimplified
         ["xgm_extra_header"] = "XG Mobile 扩展坞",
         ["xgm_extra_lights_label"] = "扩展坞灯光",
         ["xgm_extra_brightness_label"] = "亮度",
+        ["xgm_pcie_pm_hint"] = "如果实时切换卡住，请在内核命令行中添加 pcie_port_pm=off。",
         ["xgm_fan"] = "XG Mobile 风扇",
         ["confirm_yes"] = "是",
         ["confirm_no"] = "否",

@@ -872,6 +872,7 @@ public static class Malay
         ["xgm_extra_header"] = "Dok XG Mobile",
         ["xgm_extra_lights_label"] = "Lampu dok",
         ["xgm_extra_brightness_label"] = "Kecerahan",
+        ["xgm_pcie_pm_hint"] = "Jika penukaran langsung tersekat, tambah pcie_port_pm=off pada baris perintah kernel.",
         ["xgm_fan"] = "Kipas XG Mobile",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

@@ -747,6 +747,7 @@ public static class Turkish
         ["xgm_extra_header"] = "XG Mobile Dok",
         ["xgm_extra_lights_label"] = "Dok ışıkları",
         ["xgm_extra_brightness_label"] = "Parlaklık",
+        ["xgm_pcie_pm_hint"] = "Canlı geçiş takılırsa çekirdek komut satırına pcie_port_pm=off ekleyin.",
         ["xgm_fan"] = "XG Mobile fanı",
         ["confirm_yes"] = "Evet",
         ["confirm_no"] = "Hayır",

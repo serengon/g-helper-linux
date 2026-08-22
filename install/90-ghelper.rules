@@ -14,43 +14,43 @@
 
 # ── Battery charge limit ──
 SUBSYSTEM=="power_supply", ATTR{type}=="Battery", \
-  RUN+="/bin/sh -c '[ -f $sys$devpath/charge_control_end_threshold ] && chmod 0666 $sys$devpath/charge_control_end_threshold'"
+  RUN+="/bin/sh -c '[ ! -f $sys$devpath/charge_control_end_threshold ] || chmod 0666 $sys$devpath/charge_control_end_threshold'"
 
 # ── CPU boost ──
 # Intel (module trigger — works when intel_pstate is a loadable module)
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="intel_pstate", \
-  RUN+="/bin/sh -c '[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ] && chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo'"
+  RUN+="/bin/sh -c '[ ! -f /sys/devices/system/cpu/intel_pstate/no_turbo ] || chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo'"
 
 # AMD / generic cpufreq (module trigger)
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="acpi_cpufreq", \
-  RUN+="/bin/sh -c '[ -f /sys/devices/system/cpu/cpufreq/boost ] && chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
+  RUN+="/bin/sh -c '[ ! -f /sys/devices/system/cpu/cpufreq/boost ] || chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
 
 # CPU device trigger — catches built-in drivers (intel_pstate, amd_pstate) that don't
 # fire module events. Also sets platform_profile permissions.
 SUBSYSTEM=="cpu", ACTION=="add", \
-  RUN+="/bin/sh -c '[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ] && chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ -f /sys/devices/system/cpu/cpufreq/boost ] && chmod 0666 /sys/devices/system/cpu/cpufreq/boost; [ -f /sys/firmware/acpi/platform_profile ] && chmod 0666 /sys/firmware/acpi/platform_profile'"
+  RUN+="/bin/sh -c '[ ! -f /sys/devices/system/cpu/intel_pstate/no_turbo ] || chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ ! -f /sys/devices/system/cpu/cpufreq/boost ] || chmod 0666 /sys/devices/system/cpu/cpufreq/boost; [ ! -f /sys/firmware/acpi/platform_profile ] || chmod 0666 /sys/firmware/acpi/platform_profile'"
 
 # ── ACPI platform profile ──
 # Allow non-root to set platform profile (balanced/performance/low-power)
 ACTION=="add|change", SUBSYSTEM=="acpi", \
-  RUN+="/bin/sh -c '[ -f /sys/firmware/acpi/platform_profile ] && chmod 0666 /sys/firmware/acpi/platform_profile'"
+  RUN+="/bin/sh -c '[ ! -f /sys/firmware/acpi/platform_profile ] || chmod 0666 /sys/firmware/acpi/platform_profile'"
 
 # ── Backlight ──
 SUBSYSTEM=="backlight", ACTION=="add", \
   RUN+="/bin/chmod 0666 /sys%p/brightness"
 # Fallback: chmod by class path (fires even if device existed before rule load)
 SUBSYSTEM=="backlight", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/backlight/%k/brightness 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/backlight/%k/brightness 2>/dev/null || true'"
 
 # ── AMD GPU power/clock control ──
 SUBSYSTEM=="pci", DRIVERS=="amdgpu", \
-  RUN+="/bin/sh -c 'D=/sys%p; for n in pp_od_clk_voltage power_dpm_force_performance_level pp_dpm_sclk pp_dpm_mclk pp_power_profile_mode; do [ -e $$D/$$n ] && chmod 0666 $$D/$$n; done; for c in $$D/hwmon/hwmon*/power1_cap; do [ -e $$c ] && chmod 0666 $$c; done'"
+  RUN+="/bin/sh -c 'D=/sys%p; for n in pp_od_clk_voltage power_dpm_force_performance_level pp_dpm_sclk pp_dpm_mclk pp_power_profile_mode; do [ ! -e $$D/$$n ] || chmod 0666 $$D/$$n; done; for c in $$D/hwmon/hwmon*/power1_cap; do [ ! -e $$c ] || chmod 0666 $$c; done'"
 KERNEL=="hwmon*", SUBSYSTEM=="hwmon", ATTR{name}=="amdgpu", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys%p/power1_cap 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys%p/power1_cap 2>/dev/null || true'"
 
 # ── PCIe ASPM policy ──
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="pcie_aspm", \
-  RUN+="/bin/sh -c '[ -f /sys/module/pcie_aspm/parameters/policy ] && chmod 0666 /sys/module/pcie_aspm/parameters/policy'"
+  RUN+="/bin/sh -c '[ ! -f /sys/module/pcie_aspm/parameters/policy ] || chmod 0666 /sys/module/pcie_aspm/parameters/policy'"
 
 # ── ryzen_smu (Curve Optimizer undervolting) ──
 # Only rsmu_cmd and smu_args need write access for sending CO commands.
@@ -63,17 +63,17 @@ ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="ryzen_smu", \
 # loaded at boot. CPU events fire on trigger (unlike module events); add|change
 # covers both boot-time add and the default `change` action trigger sends.
 SUBSYSTEM=="cpu", KERNEL=="cpu0", ACTION=="add|change", \
-  RUN+="/bin/sh -c '[ -f /sys/kernel/ryzen_smu_drv/rsmu_cmd ] && chmod 0666 /sys/kernel/ryzen_smu_drv/rsmu_cmd /sys/kernel/ryzen_smu_drv/smu_args'"
+  RUN+="/bin/sh -c '[ ! -f /sys/kernel/ryzen_smu_drv/rsmu_cmd ] || chmod 0666 /sys/kernel/ryzen_smu_drv/rsmu_cmd /sys/kernel/ryzen_smu_drv/smu_args'"
 
 # ── CPU online/offline (core toggling) ──
 SUBSYSTEM=="cpu", ACTION=="add", \
-  RUN+="/bin/sh -c 'for f in /sys/devices/system/cpu/cpu*/online; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/devices/system/cpu/cpu*/online; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # ── CPU energy_performance_preference (per-mode EPP) ──
 # cpufreq policy dirs appear after the cpu add event on some kernels, so also
 # trigger on cpu0 change (fired by `udevadm trigger` during install).
 SUBSYSTEM=="cpu", KERNEL=="cpu0", ACTION=="add|change", \
-  RUN+="/bin/sh -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 #@section uinput
 
@@ -148,7 +148,7 @@ SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
 # platform device (timing race on dual-backend kernels with asus-armoury loaded).
 # This shell fallback catches any that were missed by the per-attribute rules.
 SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
-  RUN+="/bin/sh -c 'for attr in ppt_pl1_spl ppt_pl2_sppt ppt_fppt ppt_apu_sppt ppt_platform_sppt nv_dynamic_boost nv_temp_target; do [ -f /sys/devices/platform/asus-nb-wmi/$$attr ] && chmod 0666 /sys/devices/platform/asus-nb-wmi/$$attr; done'"
+  RUN+="/bin/sh -c 'for attr in ppt_pl1_spl ppt_pl2_sppt ppt_fppt ppt_apu_sppt ppt_platform_sppt nv_dynamic_boost nv_temp_target; do [ ! -f /sys/devices/platform/asus-nb-wmi/$$attr ] || chmod 0666 /sys/devices/platform/asus-nb-wmi/$$attr; done'"
 
 # eGPU and boot sound
 SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
@@ -167,10 +167,10 @@ SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
 # dedicated module/cpu/acpi triggers are unreliable on some distros
 # (Bazzite/Fedora Atomic: intel_pstate built-in, CPU add fires too early).
 SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
-  RUN+="/bin/sh -c '[ -f /sys/firmware/acpi/platform_profile ] && chmod 0666 /sys/firmware/acpi/platform_profile'"
+  RUN+="/bin/sh -c '[ ! -f /sys/firmware/acpi/platform_profile ] || chmod 0666 /sys/firmware/acpi/platform_profile'"
 
 SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
-  RUN+="/bin/sh -c '[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ] && chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ -f /sys/devices/system/cpu/cpufreq/boost ] && chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
+  RUN+="/bin/sh -c '[ ! -f /sys/devices/system/cpu/intel_pstate/no_turbo ] || chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ ! -f /sys/devices/system/cpu/cpufreq/boost ] || chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
 
 # ── asus-nb-wmi bus device ──
 # GPU Eco mode, MUX switch, Mini LED
@@ -191,7 +191,7 @@ SUBSYSTEM=="platform", DRIVER=="asus-nb-wmi", \
   RUN+="/bin/chmod 0666 /sys/bus/pci/rescan"
 
 SUBSYSTEM=="leds", KERNEL=="asus::kbd_backlight*", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null || true'"
 
 SUBSYSTEM=="leds", KERNEL=="asus::lightbar", \
   RUN+="/bin/chmod 0666 /sys/class/leds/asus::lightbar/brightness"
@@ -199,33 +199,33 @@ SUBSYSTEM=="leds", KERNEL=="asus::lightbar", \
 # XG Mobile dock ring. Name suffix varies by dock firmware, hence the glob.
 # This is the fallback used when the dock's hidraw node is unavailable.
 SUBSYSTEM=="leds", KERNEL=="asus:xgm*", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null || true'"
 
 SUBSYSTEM=="leds", KERNEL=="asus::kbd_backlight*", \
   ATTR{multi_intensity}!="", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/multi_intensity 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/multi_intensity 2>/dev/null || true'"
 
 SUBSYSTEM=="leds", KERNEL=="asus::kbd_backlight*", \
-  RUN+="/bin/sh -c '[ -f /sys/class/leds/%k/kbd_rgb_mode ] && chmod 0666 /sys/class/leds/%k/kbd_rgb_mode'"
+  RUN+="/bin/sh -c '[ ! -f /sys/class/leds/%k/kbd_rgb_mode ] || chmod 0666 /sys/class/leds/%k/kbd_rgb_mode'"
 
 SUBSYSTEM=="leds", KERNEL=="asus::kbd_backlight*", \
-  RUN+="/bin/sh -c '[ -f /sys/class/leds/%k/kbd_rgb_state ] && chmod 0666 /sys/class/leds/%k/kbd_rgb_state'"
+  RUN+="/bin/sh -c '[ ! -f /sys/class/leds/%k/kbd_rgb_state ] || chmod 0666 /sys/class/leds/%k/kbd_rgb_state'"
 
 # ── Fan curves (hwmon) ──
 # The asus_nb_wmi hwmon exposes pwm auto_point files for fan curve control.
 # We make them writable for non-root users.
 SUBSYSTEM=="hwmon", ATTR{name}=="asus_nb_wmi", \
-  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_auto_point*; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_auto_point*; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 SUBSYSTEM=="hwmon", ATTR{name}=="asus_nb_wmi", \
-  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_enable; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_enable; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # ── Fan curves (asus_custom_fan_curve hwmon, newer kernels) ──
 SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", \
-  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_auto_point*; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_auto_point*; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 SUBSYSTEM=="hwmon", ATTR{name}=="asus_custom_fan_curve", \
-  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_enable; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/class/hwmon/%k/pwm*_enable; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # ── ASUS input devices (hotkeys) ──
 # Grant read access to event devices so non-root can receive Fn-key events.
@@ -244,19 +244,19 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="0b05", MODE="0666"
 # have no USB parent, so ATTRS{idVendor} won't match. Match via the HID device
 # uevent which contains the vendor ID in HID_ID field.
 SUBSYSTEM=="hidraw", ACTION=="add", \
-  RUN+="/bin/sh -c 'grep -q 00000B05 /sys%p/device/uevent 2>/dev/null && chmod 0666 /dev/%k'"
+  RUN+="/bin/sh -c '! grep -q 00000B05 /sys%p/device/uevent 2>/dev/null || chmod 0666 /dev/%k'"
 
 # ── ASUS firmware-attributes (asus-armoury, kernel 6.8+) ──
 # On newer kernels, ASUS WMI attributes move to firmware-attributes.
 # chmod all current_value files under the asus-armoury attributes dir.
 ACTION=="add|change", SUBSYSTEM=="firmware-attributes", \
-  RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/*/current_value; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in /sys/class/firmware-attributes/asus-armoury/attributes/*/current_value; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # Trigger on asus_armoury module load — the firmware-attributes subsystem event above
 # may fire before all attribute files are populated (race on fast kernels like CachyOS).
 # This module trigger provides a second chance with a brief delay.
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="asus_armoury", \
-  RUN+="/bin/sh -c 'sleep 1; for f in /sys/class/firmware-attributes/asus-armoury/attributes/*/current_value; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'sleep 1; for f in /sys/class/firmware-attributes/asus-armoury/attributes/*/current_value; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 #@section lenovo
 
@@ -264,49 +264,49 @@ ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="asus_armoury", \
 # ideapad-laptop platform device (ACPI VPC2004): performance fallback,
 # battery conservation, fn-lock, always-on USB, camera
 ACTION=="add|change", SUBSYSTEM=="platform", DRIVER=="ideapad_acpi", \
-  RUN+="/bin/sh -c 'for f in fan_mode conservation_mode fn_lock usb_charging camera_power touchpad; do [ -f $sys$devpath/$$f ] && chmod 0666 $sys$devpath/$$f; done'"
+  RUN+="/bin/sh -c 'for f in fan_mode conservation_mode fn_lock usb_charging camera_power touchpad; do [ ! -f $sys$devpath/$$f ] || chmod 0666 $sys$devpath/$$f; done'"
 
 # platform_profile + CPU boost on Lenovo - same trigger pattern as the
 # asus-nb-wmi rule above, bound to ideapad_acpi which all consumer Lenovo
 # laptops (IdeaPad/Legion/LOQ/Yoga) expose
 SUBSYSTEM=="platform", DRIVER=="ideapad_acpi", \
-  RUN+="/bin/sh -c '[ -f /sys/firmware/acpi/platform_profile ] && chmod 0666 /sys/firmware/acpi/platform_profile'"
+  RUN+="/bin/sh -c '[ ! -f /sys/firmware/acpi/platform_profile ] || chmod 0666 /sys/firmware/acpi/platform_profile'"
 
 SUBSYSTEM=="platform", DRIVER=="ideapad_acpi", \
-  RUN+="/bin/sh -c '[ -f /sys/devices/system/cpu/intel_pstate/no_turbo ] && chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ -f /sys/devices/system/cpu/cpufreq/boost ] && chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
+  RUN+="/bin/sh -c '[ ! -f /sys/devices/system/cpu/intel_pstate/no_turbo ] || chmod 0666 /sys/devices/system/cpu/intel_pstate/no_turbo; [ ! -f /sys/devices/system/cpu/cpufreq/boost ] || chmod 0666 /sys/devices/system/cpu/cpufreq/boost'"
 
 # lenovo-wmi-gamezone provides platform_profile on modern Legion/LOQ;
 # module event as fallback trigger when ideapad binds before the profile
 # provider registers
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="lenovo_wmi_gamezone", \
-  RUN+="/bin/sh -c 'sleep 1; [ -f /sys/firmware/acpi/platform_profile ] && chmod 0666 /sys/firmware/acpi/platform_profile'"
+  RUN+="/bin/sh -c 'sleep 1; [ ! -f /sys/firmware/acpi/platform_profile ] || chmod 0666 /sys/firmware/acpi/platform_profile'"
 
 # Lenovo keyboard backlight LED (platform::kbd_backlight)
 SUBSYSTEM=="leds", KERNEL=="platform::kbd_backlight*", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null || true'"
 
 # lenovo-wmi-other firmware-attributes (PPT power limit tunables)
 ACTION=="add|change", SUBSYSTEM=="firmware-attributes", KERNEL=="lenovo-wmi-other*", \
-  RUN+="/bin/sh -c 'for f in $sys$devpath/attributes/*/current_value; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in $sys$devpath/attributes/*/current_value; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # Second chance on module load - attribute files can appear after the
 # subsystem event (same race as asus_armoury above)
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="lenovo_wmi_other", \
-  RUN+="/bin/sh -c 'sleep 1; for f in /sys/class/firmware-attributes/lenovo-wmi-other*/attributes/*/current_value; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'sleep 1; for f in /sys/class/firmware-attributes/lenovo-wmi-other*/attributes/*/current_value; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # ideapad battery extension (charge_types: Standard / Fast / Long_Life)
 SUBSYSTEM=="power_supply", ATTR{type}=="Battery", \
-  RUN+="/bin/sh -c '[ -f $sys$devpath/charge_types ] && chmod 0666 $sys$devpath/charge_types'"
+  RUN+="/bin/sh -c '[ ! -f $sys$devpath/charge_types ] || chmod 0666 $sys$devpath/charge_types'"
 
 # lenovo_wmi_other hwmon: manual fan target RPM (kernel 7.0+).
 # fanN_target is RW (0 = auto); min/max/div stay read-only.
 SUBSYSTEM=="hwmon", ATTR{name}=="lenovo_wmi_other", \
-  RUN+="/bin/sh -c 'for f in $sys$devpath/fan*_target; do [ -f \"$$f\" ] && chmod 0666 \"$$f\"; done'"
+  RUN+="/bin/sh -c 'for f in $sys$devpath/fan*_target; do [ ! -f \"$$f\" ] || chmod 0666 \"$$f\"; done'"
 
 # Second chance on module load - hwmon channels can appear after the
 # subsystem event (same race pattern as the firmware-attributes rules)
 ACTION=="add|change", SUBSYSTEM=="module", KERNEL=="lenovo_wmi_other", \
-  RUN+="/bin/sh -c 'sleep 1; for d in /sys/class/hwmon/hwmon*; do grep -q lenovo_wmi_other \"$$d/name\" 2>/dev/null && chmod 0666 \"$$d\"/fan*_target 2>/dev/null; done'"
+  RUN+="/bin/sh -c 'sleep 1; for d in /sys/class/hwmon/hwmon*; do ! grep -q lenovo_wmi_other \"$$d/name\" 2>/dev/null || chmod 0666 \"$$d\"/fan*_target 2>/dev/null || true; done'"
 
 # Lenovo 4-zone / Spectrum RGB keyboards: ITE USB HID (VID 0x048D).
 # Same access pattern as the ASUS 0b05 rule above.
@@ -320,7 +320,7 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Lenovo WMI Camera Button", M
 # Lenovo status LEDs the app may drive (fnlock sync; micmute/mute via
 # lenovo-wmi-hotkey-utilities, kernel 6.14+)
 SUBSYSTEM=="leds", KERNEL=="platform::fnlock|platform::micmute|platform::mute", \
-  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null'"
+  RUN+="/bin/sh -c 'chmod 0666 /sys/class/leds/%k/brightness 2>/dev/null || true'"
 
 #@section peripherals
 

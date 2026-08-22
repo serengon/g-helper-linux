@@ -347,18 +347,22 @@ public static class InputDispatcher
         var token = _perfDebounce.Token;
         _ = Task.Delay(300, token).ContinueWith(t =>
         {
-            if (t.IsCanceled) return;
+            if (t.IsCanceled)
+                return;
             int n = Interlocked.Exchange(ref _perfCycleCount, 0);
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 var mode = App.Mode;
-                if (mode == null) return;
+                if (mode == null)
+                    return;
                 // Advance n steps through the mode list
                 int target = Mode.Modes.GetCurrent();
                 var list = Mode.Modes.GetList();
-                if (list.Count == 0) return;
+                if (list.Count == 0)
+                    return;
                 int idx = list.IndexOf(target);
-                if (idx < 0) idx = 0;
+                if (idx < 0)
+                    idx = 0;
                 idx = (idx + n) % list.Count;
                 mode.SetPerformanceMode(list[idx], notify: true);
                 App.UpdateTrayIcon();

@@ -872,6 +872,7 @@ public static class Slovak
         ["xgm_extra_header"] = "Dok XG Mobile",
         ["xgm_extra_lights_label"] = "Svetlá doku",
         ["xgm_extra_brightness_label"] = "Jas",
+        ["xgm_pcie_pm_hint"] = "Ak sa prepínanie za chodu zasekne, pridajte pcie_port_pm=off do príkazového riadku jadra.",
         ["xgm_fan"] = "Ventilátor XG Mobile",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

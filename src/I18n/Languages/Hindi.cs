@@ -872,6 +872,7 @@ public static class Hindi
         ["xgm_extra_header"] = "XG Mobile डॉक",
         ["xgm_extra_lights_label"] = "डॉक लाइट्स",
         ["xgm_extra_brightness_label"] = "चमक",
+        ["xgm_pcie_pm_hint"] = "यदि लाइव स्विचिंग अटक जाए, तो कर्नेल कमांड लाइन में pcie_port_pm=off जोड़ें।",
         ["xgm_fan"] = "XG Mobile पंखा",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

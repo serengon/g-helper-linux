@@ -376,7 +376,8 @@ int do_nvidia_refcnt_holders(void)
                 if (fgets(comm, sizeof(comm), cf))
                 {
                     char *nl = strchr(comm, '\n');
-                    if (nl) *nl = '\0';
+                    if (nl)
+                        *nl = '\0';
                 }
                 fclose(cf);
             }
@@ -423,7 +424,8 @@ int do_nvidia_refcnt_holders(void)
                         while (p > cgline && *(p - 1) != '/')
                             p--;
                         size_t len = (size_t)(svc + 8 - p);
-                        if (len >= sizeof(unit)) len = sizeof(unit) - 1;
+                        if (len >= sizeof(unit))
+                            len = sizeof(unit) - 1;
                         memcpy(unit, p, len);
                         unit[len] = '\0';
                         break;

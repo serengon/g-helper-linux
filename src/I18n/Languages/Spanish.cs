@@ -747,6 +747,7 @@ public static class Spanish
         ["xgm_extra_header"] = "Base XG Mobile",
         ["xgm_extra_lights_label"] = "Luces de la base",
         ["xgm_extra_brightness_label"] = "Brillo",
+        ["xgm_pcie_pm_hint"] = "Si el cambio en caliente se bloquea, añade pcie_port_pm=off a la línea de comandos del kernel.",
         ["xgm_fan"] = "Ventilador XG Mobile",
         ["confirm_yes"] = "Sí",
         ["confirm_no"] = "No",

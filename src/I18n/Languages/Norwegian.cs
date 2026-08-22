@@ -750,6 +750,7 @@ public static class Norwegian
         ["xgm_extra_header"] = "XG Mobile-dokk",
         ["xgm_extra_lights_label"] = "Dokk-lys",
         ["xgm_extra_brightness_label"] = "Lysstyrke",
+        ["xgm_pcie_pm_hint"] = "Hvis bytte under drift henger, legg til pcie_port_pm=off på kjernens kommandolinje.",
         ["xgm_fan"] = "XG Mobile-vifte",
         ["confirm_yes"] = "Ja",
         ["confirm_no"] = "Nei",

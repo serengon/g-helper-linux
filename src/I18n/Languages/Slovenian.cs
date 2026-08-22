@@ -872,6 +872,7 @@ public static class Slovenian
         ["xgm_extra_header"] = "Priklopna postaja XG Mobile",
         ["xgm_extra_lights_label"] = "Luči postaje",
         ["xgm_extra_brightness_label"] = "Svetlost",
+        ["xgm_pcie_pm_hint"] = "Če preklop med delovanjem obstane, dodajte pcie_port_pm=off v ukazno vrstico jedra.",
         ["xgm_fan"] = "Ventilator XG Mobile",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

@@ -872,6 +872,7 @@ public static class Latvian
         ["xgm_extra_header"] = "XG Mobile doks",
         ["xgm_extra_lights_label"] = "Doka gaismas",
         ["xgm_extra_brightness_label"] = "Spilgtums",
+        ["xgm_pcie_pm_hint"] = "Ja pārslēgšana darbības laikā iestrēgst, pievienojiet pcie_port_pm=off kodola komandrindai.",
         ["xgm_fan"] = "XG Mobile ventilators",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

@@ -750,6 +750,7 @@ public static class Japanese
         ["xgm_extra_header"] = "XG Mobile ドック",
         ["xgm_extra_lights_label"] = "ドックライト",
         ["xgm_extra_brightness_label"] = "明るさ",
+        ["xgm_pcie_pm_hint"] = "ライブ切り替えが停止する場合は、カーネルコマンドラインに pcie_port_pm=off を追加してください。",
         ["xgm_fan"] = "XG Mobile ファン",
         ["confirm_yes"] = "はい",
         ["confirm_no"] = "いいえ",

@@ -24,7 +24,7 @@ public partial class DevPanelsWindow : Window
             () => App.MainWindowInstance?.RefreshScreenPublic()),
         new("Aura keyboard panel", "Main window", "show_aura_dev",
             () => App.MainWindowInstance?.RefreshKeyboard()),
-        new("XG Mobile button", "Main window", "show_xgm_dev",
+        new("XG Mobile button + dock panel", "Main window / Extra Settings (reopen)", "show_xgm_dev",
             () => App.MainWindowInstance?.RefreshAllyPanel()),
         new("Suspend mode combo", "Extra Settings (reopen)", "show_deep_sleep_dev", null),
         new("EPP combos", "Extra Settings (reopen)", "show_epp_dev", null),

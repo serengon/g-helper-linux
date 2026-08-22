@@ -750,6 +750,7 @@ public static class Arabic
         ["xgm_extra_header"] = "قاعدة XG Mobile",
         ["xgm_extra_lights_label"] = "إضاءة القاعدة",
         ["xgm_extra_brightness_label"] = "السطوع",
+        ["xgm_pcie_pm_hint"] = "إذا تعطل التبديل المباشر، أضف pcie_port_pm=off إلى سطر أوامر النواة.",
         ["xgm_fan"] = "مروحة XG Mobile",
         ["confirm_yes"] = "نعم",
         ["confirm_no"] = "لا",

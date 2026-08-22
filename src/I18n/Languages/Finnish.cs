@@ -750,6 +750,7 @@ public static class Finnish
         ["xgm_extra_header"] = "XG Mobile -telakka",
         ["xgm_extra_lights_label"] = "Telakan valot",
         ["xgm_extra_brightness_label"] = "Kirkkaus",
+        ["xgm_pcie_pm_hint"] = "Jos vaihto lennossa jumiutuu, lisää pcie_port_pm=off ytimen komentoriville.",
         ["xgm_fan"] = "XG Mobile -tuuletin",
         ["confirm_yes"] = "Kyllä",
         ["confirm_no"] = "Ei",

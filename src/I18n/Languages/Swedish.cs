@@ -750,6 +750,7 @@ public static class Swedish
         ["xgm_extra_header"] = "XG Mobile-docka",
         ["xgm_extra_lights_label"] = "Dockbelysning",
         ["xgm_extra_brightness_label"] = "Ljusstyrka",
+        ["xgm_pcie_pm_hint"] = "Om byte under drift hänger, lägg till pcie_port_pm=off på kernelns kommandorad.",
         ["xgm_fan"] = "XG Mobile-fläkt",
         ["confirm_yes"] = "Ja",
         ["confirm_no"] = "Nej",

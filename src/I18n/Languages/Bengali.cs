@@ -872,6 +872,7 @@ public static class Bengali
         ["xgm_extra_header"] = "XG Mobile ডক",
         ["xgm_extra_lights_label"] = "ডকের আলো",
         ["xgm_extra_brightness_label"] = "উজ্জ্বলতা",
+        ["xgm_pcie_pm_hint"] = "লাইভ স্যুইচিং আটকে গেলে কার্নেল কমান্ড লাইনে pcie_port_pm=off যোগ করুন।",
         ["xgm_fan"] = "XG Mobile ফ্যান",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

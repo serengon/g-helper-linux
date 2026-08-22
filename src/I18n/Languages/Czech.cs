@@ -747,6 +747,7 @@ public static class Czech
         ["xgm_extra_header"] = "Dok XG Mobile",
         ["xgm_extra_lights_label"] = "Osvětlení doku",
         ["xgm_extra_brightness_label"] = "Jas",
+        ["xgm_pcie_pm_hint"] = "Pokud se přepínání za běhu zasekne, přidejte pcie_port_pm=off na příkazový řádek jádra.",
         ["xgm_fan"] = "Ventilátor XG Mobile",
         ["confirm_yes"] = "Ano",
         ["confirm_no"] = "Ne",

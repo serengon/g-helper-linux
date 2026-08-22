@@ -747,6 +747,7 @@ public static class PortugueseBR
         ["xgm_extra_header"] = "Dock XG Mobile",
         ["xgm_extra_lights_label"] = "Iluminação do dock",
         ["xgm_extra_brightness_label"] = "Brilho",
+        ["xgm_pcie_pm_hint"] = "Se a troca ao vivo travar, adicione pcie_port_pm=off à linha de comando do kernel.",
         ["xgm_fan"] = "Ventoinha XG Mobile",
         ["confirm_yes"] = "Sim",
         ["confirm_no"] = "Não",

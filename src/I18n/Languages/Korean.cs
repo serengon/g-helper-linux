@@ -750,6 +750,7 @@ public static class Korean
         ["xgm_extra_header"] = "XG Mobile 도크",
         ["xgm_extra_lights_label"] = "도크 조명",
         ["xgm_extra_brightness_label"] = "밝기",
+        ["xgm_pcie_pm_hint"] = "실시간 전환이 멈추면 커널 명령줄에 pcie_port_pm=off 를 추가하세요.",
         ["xgm_fan"] = "XG Mobile 팬",
         ["confirm_yes"] = "예",
         ["confirm_no"] = "아니오",

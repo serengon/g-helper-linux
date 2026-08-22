@@ -750,6 +750,7 @@ public static class Serbian
         ["xgm_extra_header"] = "XG Mobile dok",
         ["xgm_extra_lights_label"] = "Osvetljenje doka",
         ["xgm_extra_brightness_label"] = "Osvetljenost",
+        ["xgm_pcie_pm_hint"] = "Ако пребацивање у раду блокира, додајте pcie_port_pm=off у командну линију кернела.",
         ["xgm_fan"] = "Ventilator XG Mobile",
         ["confirm_yes"] = "Da",
         ["confirm_no"] = "Ne",

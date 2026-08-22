@@ -747,6 +747,7 @@ public static class Romanian
         ["xgm_extra_header"] = "Stație de andocare XG Mobile",
         ["xgm_extra_lights_label"] = "Lumini stație",
         ["xgm_extra_brightness_label"] = "Luminozitate",
+        ["xgm_pcie_pm_hint"] = "Dacă comutarea la cald se blochează, adăugați pcie_port_pm=off în linia de comandă a nucleului.",
         ["xgm_fan"] = "Ventilator XG Mobile",
         ["confirm_yes"] = "Da",
         ["confirm_no"] = "Nu",

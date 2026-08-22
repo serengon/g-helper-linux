@@ -872,6 +872,7 @@ public static class Lithuanian
         ["xgm_extra_header"] = "XG Mobile dokas",
         ["xgm_extra_lights_label"] = "Doko šviesos",
         ["xgm_extra_brightness_label"] = "Ryškumas",
+        ["xgm_pcie_pm_hint"] = "Jei perjungimas veikiant užstringa, pridėkite pcie_port_pm=off į branduolio komandų eilutę.",
         ["xgm_fan"] = "XG Mobile ventiliatorius",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

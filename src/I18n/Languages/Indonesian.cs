@@ -750,6 +750,7 @@ public static class Indonesian
         ["xgm_extra_header"] = "Dock XG Mobile",
         ["xgm_extra_lights_label"] = "Lampu dock",
         ["xgm_extra_brightness_label"] = "Kecerahan",
+        ["xgm_pcie_pm_hint"] = "Jika peralihan langsung macet, tambahkan pcie_port_pm=off ke baris perintah kernel.",
         ["xgm_fan"] = "Kipas XG Mobile",
         ["confirm_yes"] = "Ya",
         ["confirm_no"] = "Tidak",

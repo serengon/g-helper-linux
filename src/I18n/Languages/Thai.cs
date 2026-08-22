@@ -750,6 +750,7 @@ public static class Thai
         ["xgm_extra_header"] = "ด็อก XG Mobile",
         ["xgm_extra_lights_label"] = "ไฟด็อก",
         ["xgm_extra_brightness_label"] = "ความสว่าง",
+        ["xgm_pcie_pm_hint"] = "หากการสลับแบบสดค้าง ให้เพิ่ม pcie_port_pm=off ในบรรทัดคำสั่งเคอร์เนล",
         ["xgm_fan"] = "พัดลม XG Mobile",
         ["confirm_yes"] = "ใช่",
         ["confirm_no"] = "ไม่",

@@ -750,6 +750,7 @@ public static class ChineseTraditional
         ["xgm_extra_header"] = "XG Mobile 擴充基座",
         ["xgm_extra_lights_label"] = "基座燈光",
         ["xgm_extra_brightness_label"] = "亮度",
+        ["xgm_pcie_pm_hint"] = "如果即時切換卡住，請在核心命令列中加入 pcie_port_pm=off。",
         ["xgm_fan"] = "XG Mobile 風扇",
         ["confirm_yes"] = "是",
         ["confirm_no"] = "否",

@@ -750,6 +750,7 @@ public static class Greek
         ["xgm_extra_header"] = "Dock XG Mobile",
         ["xgm_extra_lights_label"] = "Φώτα dock",
         ["xgm_extra_brightness_label"] = "Φωτεινότητα",
+        ["xgm_pcie_pm_hint"] = "Αν η εναλλαγή σε πραγματικό χρόνο κολλήσει, προσθέστε pcie_port_pm=off στη γραμμή εντολών του πυρήνα.",
         ["xgm_fan"] = "Ανεμιστήρας XG Mobile",
         ["confirm_yes"] = "Ναι",
         ["confirm_no"] = "Όχι",

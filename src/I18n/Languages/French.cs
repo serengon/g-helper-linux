@@ -747,6 +747,7 @@ public static class French
         ["xgm_extra_header"] = "Dock XG Mobile",
         ["xgm_extra_lights_label"] = "Éclairage du dock",
         ["xgm_extra_brightness_label"] = "Luminosité",
+        ["xgm_pcie_pm_hint"] = "Si la commutation à chaud se bloque, ajoutez pcie_port_pm=off à la ligne de commande du noyau.",
         ["xgm_fan"] = "Ventilateur XG Mobile",
         ["confirm_yes"] = "Oui",
         ["confirm_no"] = "Non",

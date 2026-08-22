@@ -224,6 +224,7 @@ public partial class ExtraWindow : Window
         labelXgmHeader.Text = Labels.Get("xgm_extra_header");
         checkXGMLights.Content = Labels.Get("xgm_extra_lights_label");
         labelXgmBrightnessLabel.Text = Labels.Get("xgm_extra_brightness_label");
+        labelXgmPciePmHint.Text = Labels.Get("xgm_pcie_pm_hint");
         InitXgmPanel();
         checkNvidiaPowerdBattery.Content = Labels.Get("nvidia_powerd_battery");
         InitNvidiaPowerdBattery();
@@ -2583,7 +2584,7 @@ public partial class ExtraWindow : Window
     private void InitXgmPanel()
     {
         bool present = USB.XGM.IsLightAvailable();
-        panelXGM.IsVisible = present;
+        panelXGM.IsVisible = present || Helpers.AppConfig.Is("show_xgm_dev");
         if (!present)
             return;
 

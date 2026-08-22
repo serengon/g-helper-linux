@@ -747,6 +747,7 @@ public static class Dutch
         ["xgm_extra_header"] = "XG Mobile-dock",
         ["xgm_extra_lights_label"] = "Dockverlichting",
         ["xgm_extra_brightness_label"] = "Helderheid",
+        ["xgm_pcie_pm_hint"] = "Als live schakelen vastloopt, voeg pcie_port_pm=off toe aan de kernel-opdrachtregel.",
         ["xgm_fan"] = "XG Mobile-ventilator",
         ["confirm_yes"] = "Ja",
         ["confirm_no"] = "Nee",

@@ -747,6 +747,7 @@ public static class Ukrainian
         ["xgm_extra_header"] = "Док-станція XG Mobile",
         ["xgm_extra_lights_label"] = "Підсвічування доку",
         ["xgm_extra_brightness_label"] = "Яскравість",
+        ["xgm_pcie_pm_hint"] = "Якщо перемикання на ходу зависає, додайте pcie_port_pm=off до командного рядка ядра.",
         ["xgm_fan"] = "Вентилятор XG Mobile",
         ["confirm_yes"] = "Так",
         ["confirm_no"] = "Ні",

@@ -747,6 +747,7 @@ public static class Polish
         ["xgm_extra_header"] = "Stacja dokująca XG Mobile",
         ["xgm_extra_lights_label"] = "Podświetlenie stacji",
         ["xgm_extra_brightness_label"] = "Jasność",
+        ["xgm_pcie_pm_hint"] = "Jeśli przełączanie na gorąco się zawiesza, dodaj pcie_port_pm=off do wiersza poleceń jądra.",
         ["xgm_fan"] = "Wentylator XG Mobile",
         ["confirm_yes"] = "Tak",
         ["confirm_no"] = "Nie",

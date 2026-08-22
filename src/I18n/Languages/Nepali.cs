@@ -872,6 +872,7 @@ public static class Nepali
         ["xgm_extra_header"] = "XG Mobile डक",
         ["xgm_extra_lights_label"] = "डक बत्तीहरू",
         ["xgm_extra_brightness_label"] = "चमक",
+        ["xgm_pcie_pm_hint"] = "लाइभ स्विचिङ अड्किएमा कर्नेल कमाण्ड लाइनमा pcie_port_pm=off थप्नुहोस्।",
         ["xgm_fan"] = "XG Mobile पङ्खा",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any

@@ -750,6 +750,7 @@ public static class Danish
         ["xgm_extra_header"] = "XG Mobile-dok",
         ["xgm_extra_lights_label"] = "Doklys",
         ["xgm_extra_brightness_label"] = "Lysstyrke",
+        ["xgm_pcie_pm_hint"] = "Hvis live-skift hænger, tilføj pcie_port_pm=off til kernens kommandolinje.",
         ["xgm_fan"] = "XG Mobile-blæser",
         ["confirm_yes"] = "Ja",
         ["confirm_no"] = "Nej",

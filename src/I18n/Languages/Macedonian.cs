@@ -750,6 +750,7 @@ public static class Macedonian
         ["xgm_extra_header"] = "XG Mobile докинг станица",
         ["xgm_extra_lights_label"] = "Светла на станицата",
         ["xgm_extra_brightness_label"] = "Осветленост",
+        ["xgm_pcie_pm_hint"] = "Ако префрлањето во работа блокира, додајте pcie_port_pm=off во командната линија на кернелот.",
         ["xgm_fan"] = "Вентилатор за XG Mobile",
         ["confirm_yes"] = "Да",
         ["confirm_no"] = "Не",

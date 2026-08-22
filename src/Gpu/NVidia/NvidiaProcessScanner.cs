@@ -115,8 +115,10 @@ public static class NvidiaProcessScanner
     private static string FormatHolderBrief(int pid, string comm, string user, int fds, int dri, int i2c)
     {
         string s = $"{pid}:{comm}({user})/{fds}fds";
-        if (dri > 0) s += $"+{dri}dri";
-        if (i2c > 0) s += $"+{i2c}i2c";
+        if (dri > 0)
+            s += $"+{dri}dri";
+        if (i2c > 0)
+            s += $"+{i2c}i2c";
         return s;
     }
 

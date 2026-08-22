@@ -747,6 +747,7 @@ public static class Vietnamese
         ["xgm_extra_header"] = "Dock XG Mobile",
         ["xgm_extra_lights_label"] = "Đèn dock",
         ["xgm_extra_brightness_label"] = "Độ sáng",
+        ["xgm_pcie_pm_hint"] = "Nếu chuyển đổi trực tiếp bị treo, hãy thêm pcie_port_pm=off vào dòng lệnh kernel.",
         ["xgm_fan"] = "Quạt XG Mobile",
         ["confirm_yes"] = "Có",
         ["confirm_no"] = "Không",

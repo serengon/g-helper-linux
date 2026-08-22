@@ -872,6 +872,7 @@ public static class Filipino
         ["xgm_extra_header"] = "XG Mobile Dock",
         ["xgm_extra_lights_label"] = "Mga ilaw ng dock",
         ["xgm_extra_brightness_label"] = "Brightness",
+        ["xgm_pcie_pm_hint"] = "Kung nahahang ang live switching, idagdag ang pcie_port_pm=off sa kernel command line.",
         ["xgm_fan"] = "XG Mobile Fan",
 
         // Reusable confirm-dialog buttons (used by ConfirmDialog and any
