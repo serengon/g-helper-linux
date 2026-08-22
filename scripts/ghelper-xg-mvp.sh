@@ -123,6 +123,7 @@ kernel_arg_running() {
 }
 
 kernel_arg_in_all_entries() {
+    command -v grubby >/dev/null 2>&1 || return 1
     local args found=0
     while IFS= read -r args; do
         found=1
@@ -133,6 +134,31 @@ kernel_arg_in_all_entries() {
     done < <(grubby --info=ALL 2>/dev/null \
         | sed -n 's/^args="\(.*\)"$/\1/p')
     [[ "$found" == "1" ]]
+}
+
+refresh_initramfs() {
+    if command -v update-initramfs >/dev/null 2>&1; then
+        update-initramfs -u -k "$(uname -r)"
+    elif command -v dracut >/dev/null 2>&1; then
+        dracut --force "/boot/initramfs-$(uname -r).img" "$(uname -r)"
+    else
+        die "neither update-initramfs nor dracut is available"
+    fi
+}
+
+remove_legacy_kernel_arg() {
+    if command -v grubby >/dev/null 2>&1; then
+        grubby --update-kernel=ALL --remove-args="$KERNEL_ARG"
+    fi
+    remove_kernel_cmdline_token
+}
+
+gdm_config_path() {
+    if [[ -f /etc/gdm3/custom.conf ]]; then
+        printf '%s\n' /etc/gdm3/custom.conf
+    else
+        printf '%s\n' /etc/gdm/custom.conf
+    fi
 }
 
 kernel_arg_persisted() {
@@ -264,7 +290,9 @@ install_user_files() {
 }
 
 restore_poc_autologin() {
-    local gdm=/etc/gdm/custom.conf backup=/etc/gdm/custom.conf.ghelper-poc-backup
+    local gdm backup
+    gdm="$(gdm_config_path)"
+    backup="${gdm}.ghelper-poc-backup"
     GDM_AUTLOGIN_RESTORED=0
     if [[ -f "$gdm" && ! -L "$gdm" \
        && -f "$backup" && ! -L "$backup" ]] \
@@ -299,7 +327,7 @@ write_state() {
 install_mvp() {
     require_root
     [[ $# == 2 ]] || { usage >&2; exit 64; }
-    for command in getent realpath grubby systemctl busctl udevadm sha256sum dracut python3 runuser; do
+    for command in getent realpath systemctl busctl udevadm sha256sum python3 runuser; do
         command_required "$command"
     done
     resolve_user "$2"
@@ -382,7 +410,7 @@ install_mvp() {
     systemctl mask nvidia-powerd.service
     systemctl enable nvidia-suspend.service nvidia-resume.service \
         nvidia-hibernate.service nvidia-suspend-then-hibernate.service
-    dracut --force "/boot/initramfs-$(uname -r).img" "$(uname -r)"
+    refresh_initramfs
     if systemctl --quiet is-active "user@${TARGET_UID}.service"; then
         user_systemctl daemon-reload
         user_systemctl \
@@ -404,8 +432,7 @@ install_mvp() {
     udevadm trigger --subsystem-match=drm --action=add
 
     if [[ "$KERNEL_ARG_ADDED" == "1" ]]; then
-        grubby --update-kernel=ALL --remove-args="$KERNEL_ARG"
-        remove_kernel_cmdline_token
+        remove_legacy_kernel_arg
         KERNEL_ARG_ADDED=0
         write_state
     fi
@@ -462,7 +489,7 @@ mutter_ignore_active() {
 
 status_mvp() {
     [[ $# -le 1 ]] || { usage >&2; exit 64; }
-    for command in getent systemctl grubby udevadm; do command_required "$command"; done
+    for command in getent systemctl udevadm; do command_required "$command"; done
     resolve_user "${1:-}"
     local failures=0 connected enabled nvidia
     printf 'G-Helper XG Mobile MVP status\n'
@@ -512,7 +539,7 @@ status_mvp() {
     kernel_arg_running \
         && printf 'warning legacy fallback %s is active in this boot\n' "$KERNEL_ARG" \
         || printf 'ok      legacy global PCIe workaround is not active\n'
-    if grep -Eq '^[[:space:]]*AutomaticLogin(Enable)?[[:space:]]*=' /etc/gdm/custom.conf 2>/dev/null; then
+    if grep -Eq '^[[:space:]]*AutomaticLogin(Enable)?[[:space:]]*=' "$(gdm_config_path)" 2>/dev/null; then
         printf 'warning GDM autologin is still configured\n'
     else
         printf 'ok      GDM autologin disabled\n'
@@ -538,7 +565,7 @@ status_mvp() {
 uninstall_mvp() {
     require_root
     [[ $# -le 1 ]] || { usage >&2; exit 64; }
-    for command in getent grubby systemctl busctl udevadm; do command_required "$command"; done
+    for command in getent systemctl busctl udevadm; do command_required "$command"; done
     resolve_user "${1:-}"
     local kernel_added=0
     [[ ! -f "$STATE_FILE" ]] || kernel_added="$(state_value kernel_arg_added)"
@@ -557,8 +584,7 @@ uninstall_mvp() {
         find -P "$INSTALL_DIR" -depth -delete
     fi
     if [[ "$kernel_added" == "1" ]]; then
-        grubby --update-kernel=ALL --remove-args="$KERNEL_ARG"
-        remove_kernel_cmdline_token
+        remove_legacy_kernel_arg
     fi
     rmdir "$DAEMON_DIR" "$MARKER_DIR" "$DOC_DIR" 2>/dev/null || true
     rmdir "$PORTAL_DROPIN_DIR" 2>/dev/null || true
@@ -566,7 +592,7 @@ uninstall_mvp() {
         find -P "$STATE_DIR" -depth -delete
     fi
     systemctl daemon-reload
-    dracut --force "/boot/initramfs-$(uname -r).img" "$(uname -r)"
+    refresh_initramfs
     if systemctl --quiet is-active "user@${TARGET_UID}.service"; then
         user_systemctl daemon-reload
         user_systemctl \
