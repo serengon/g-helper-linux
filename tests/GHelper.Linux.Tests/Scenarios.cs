@@ -112,6 +112,10 @@ public static class Scenarios
         Console.WriteLine("\n GPU query gate ");
         Gate_Extend_NeverShortensWindow();
         Gate_Extend_DoesNotClearHold();
+
+        SecurityScenarios.RunAll();
+        DaemonScenarios.RunAll();
+        PocReadOnlyScenarios.RunAll();
     }
 
     // 

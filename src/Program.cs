@@ -11,13 +11,12 @@ class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        // Early-start systemd units (COSMIC autostart) may lack session vars;
-        // import them from the systemd user manager before anything reads them.
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
-            Cosmic.ImportSessionEnvironment();
+        // Must run before ResourceExtractorCli/AppConfig/native extraction so
+        // development modes are isolated and installed MVP state is selected.
+        RuntimeMode.Initialize(args);
 
-        SetGpuPreferenceEnv();
-
+        // Uninstalled review artifacts remain non-deployable. Dispatch safe
+        // metadata, exact development flags, or a verified installed MVP.
         var rc = ResourceExtractorCli.TryDispatch(args);
         if (rc.HasValue)
         {
@@ -25,10 +24,41 @@ class Program
             return;
         }
 
+        if (RuntimeMode.IsPocSmoke)
+        {
+            bool ok = RuntimeMode.ValidatePocSmoke(out var state);
+            Console.Out.WriteLine(ok ? "POC_SMOKE_OK" : "POC_SMOKE_FAILED");
+            Console.Out.WriteLine($"mode={RuntimeMode.PocBanner}");
+            Console.Out.WriteLine($"model={state.Model}");
+            Console.Out.WriteLine($"bios={state.Bios}");
+            Console.Out.WriteLine($"kernel={state.Kernel}");
+            Console.Out.WriteLine($"platform_profile={state.PlatformProfile}");
+            Console.Out.WriteLine("mutations=blocked");
+            Console.Out.WriteLine("external_processes=blocked");
+            Environment.Exit(ok ? 0 : 70);
+            return;
+        }
+
+        // Early-start systemd units (COSMIC autostart) may lack session vars;
+        // import them from the systemd user manager before anything reads them.
+        if (!RuntimeMode.IsPocMode
+            && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP")))
+            Cosmic.ImportSessionEnvironment();
+
+        SetGpuPreferenceEnv();
+
         // "ghelper --osk" toggles the on-screen keyboard of a running
         // instance (hotkey/controller-chord friendly). When no instance is
         // running, normal startup continues and App opens the keyboard.
         if (args.Contains("--osk") && CommandIpc.TrySend("toggle-osk"))
+            return;
+
+        // The installed session instance normally starts minimized. Launching
+        // G-Helper again from the desktop menu asks that existing instance to
+        // show its window instead of silently losing to the instance lock.
+        if (RuntimeMode.IsInstalledMvp
+            && args.Length == 0
+            && CommandIpc.TrySend("show-main"))
             return;
 
         // Last-resort logging: capture fatal exceptions to the log file before

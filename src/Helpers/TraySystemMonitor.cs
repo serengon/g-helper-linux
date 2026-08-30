@@ -238,6 +238,7 @@ public static class TraySystemMonitor
     private static void Tick()
     {
         App.RefreshTrayDgpuStatus();
+        App.RefreshTrayXgMobileState();
 
         int cpuTemp = -1;
         int gpuTemp = -1;

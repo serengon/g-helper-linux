@@ -3,8 +3,11 @@ src/bin/
 src/obj/
 tests/**/bin/
 tests/**/obj/
+daemon/bin/
+daemon/obj/
 dist/
 build/
+.build-cache/
 
 # Audio helper (C build artifacts; sources are tracked, objects/binary are not)
 audio-helper/*.o
@@ -40,6 +43,7 @@ Desktop.ini
 
 # NuGet (packages restored on build)
 *.nupkg
+daemon/.local/
 .planning
 .opencode
 

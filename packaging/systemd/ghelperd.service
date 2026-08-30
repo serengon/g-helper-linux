@@ -1,0 +1,39 @@
+[Unit]
+Description=G-Helper privileged hardware boundary
+Documentation=file:///usr/share/doc/ghelper-xg-mvp/privilege-boundary.md
+After=dbus.service polkit.service
+
+[Service]
+Type=dbus
+BusName=org.ghelper.Daemon1
+ExecStart=/usr/libexec/ghelper/ghelperd
+User=root
+Group=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_MODULE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_MODULE
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProcSubset=all
+# HidSharp discovers the exact 300-byte XGM interface through libudev, whose
+# monitor socket uses AF_NETLINK. System D-Bus remains AF_UNIX.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+UMask=0077
+TimeoutStartSec=10s
+TimeoutStopSec=5s
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

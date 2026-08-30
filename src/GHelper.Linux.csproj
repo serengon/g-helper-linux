@@ -35,7 +35,8 @@
     <AssemblyName>ghelper</AssemblyName>
     <RootNamespace>GHelper.Linux</RootNamespace>
     <!-- ApplicationIcon is Windows-only; on Linux we use .desktop file icon -->
-    <Version>1.0.0</Version>
+    <Version>1.0.90-x13.1</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Description>G-Helper for Linux - ASUS laptop control utility</Description>
   </PropertyGroup>
 
@@ -53,7 +54,14 @@
 
     <!-- Real-time monitoring charts -->
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.1.0-dev-798" />
-    <PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.15" />
+    <PackageReference Include="Svg.Controls.Skia.Avalonia" Version="12.0.0.13" />
+    <!-- Explicit dependency for the non-privileged system D-Bus daemon client.
+         This exact version was already in the locked Avalonia closure. -->
+    <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\daemon\Contract\DaemonContract.cs" Link="Daemon\DaemonContract.cs" />
   </ItemGroup>
 
   <!-- Embed all assets -->
@@ -61,17 +69,73 @@
     <AvaloniaResource Include="UI\Assets\**" />
     <AvaloniaResource Include="UI\Styles\**" />
     <EmbeddedResource Include="..\CHANGELOG.md" LogicalName="GHelper.Linux.CHANGELOG.md" Condition="Exists('..\CHANGELOG.md')" />
+    <EmbeddedResource Include="../build/embedded/build-environment.txt"
+                      LogicalName="GHelper.Linux.BUILD_ENVIRONMENT"
+                      Condition="Exists('../build/embedded/build-environment.txt')" />
 
-    <!-- Installer assets: the static files install-local.sh copies onto the
-         system. Embedded here so the running binary can self-provision/repair
-         them (see src/Install/Installer.cs). gpu-helper is embedded separately
-         in the EmbedNativeLibraries target since it is a build artifact. -->
-    <EmbeddedResource Include="../install/90-ghelper.rules" LogicalName="90-ghelper.rules" Condition="Exists('../install/90-ghelper.rules')" />
-    <EmbeddedResource Include="../install/gpu-block-helper.sh" LogicalName="gpu-block-helper.sh" Condition="Exists('../install/gpu-block-helper.sh')" />
-    <EmbeddedResource Include="../install/ghelper-gpu-boot.sh" LogicalName="ghelper-gpu-boot.sh" Condition="Exists('../install/ghelper-gpu-boot.sh')" />
-    <EmbeddedResource Include="../install/ghelper-gpu-boot.service" LogicalName="ghelper-gpu-boot.service" Condition="Exists('../install/ghelper-gpu-boot.service')" />
-    <EmbeddedResource Include="../install/ghelper.desktop" LogicalName="ghelper.desktop" Condition="Exists('../install/ghelper.desktop')" />
-    <EmbeddedResource Include="../install/ghelper.png" LogicalName="ghelper.png" Condition="Exists('../install/ghelper.png')" />
+    <!-- System integration assets are deliberately not embedded in Phase 1.
+         The hardened package path remains under development. -->
+  </ItemGroup>
+
+  <!-- A Release artifact is accepted only when the local reproducible-build
+       wrapper supplies its complete inputs. These unsigned MSBuild properties
+       are an accidental-misuse guard, not authentication. Canonical artifact
+       verification rebuilds and compares the external manifest. -->
+  <Target Name="RequireCanonicalLocalReleaseBuild" BeforeTargets="PrepareForBuild"
+          Condition="'$(Configuration)' == 'Release'">
+    <Error Condition="'$(GHelperCanonicalLocalBuild)' != 'true'"
+           Text="UNATTESTED Release publishing is disabled outside the canonical local reproducible-build wrapper." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(InformationalVersion)', '^1\.0\.90-x13\.1\+([0-9a-f]{40}|dirty\.[0-9a-f]{64}\.base\.[0-9a-f]{40})\.env\.[0-9a-f]{64}$'))"
+           Text="Invalid or missing local reproducible InformationalVersion." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(GHelperBuildImageId)', '^sha256:[0-9a-f]{64}$'))"
+           Text="Invalid or missing canonical build image identity." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(GHelperImageInputSha256)', '^[0-9a-f]{64}$'))"
+           Text="Invalid or missing image-input SHA-256." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(GHelperCacheInputSha256)', '^[0-9a-f]{64}$'))"
+           Text="Invalid or missing locked cache-input SHA-256." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(GHelperNuGetManifestSha256)', '^[0-9a-f]{64}$'))"
+           Text="Invalid or missing NuGet cache manifest SHA-256." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(GHelperBuildEnvironmentSha256)', '^[0-9a-f]{64}$'))"
+           Text="Invalid or missing build-environment SHA-256." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(SourceRevisionId)', '^([0-9a-f]{40}|dirty\.[0-9a-f]{64}\.base\.[0-9a-f]{40})$'))"
+           Text="Invalid or missing source provenance." />
+    <Error Condition="'$(GHelperBuildMode)' != 'clean' and '$(GHelperBuildMode)' != 'dirty-review'"
+           Text="Invalid or missing build mode." />
+    <Error Condition="'$(InformationalVersion)' != '1.0.90-x13.1+$(SourceRevisionId).env.$(GHelperBuildEnvironmentSha256)'"
+           Text="InformationalVersion is incoherent with local source/environment provenance." />
+    <Error Condition="('$(GHelperBuildMode)' == 'clean' and $([System.String]::Copy('$(SourceRevisionId)').StartsWith('dirty.'))) or ('$(GHelperBuildMode)' == 'dirty-review' and !$([System.String]::Copy('$(SourceRevisionId)').StartsWith('dirty.')))"
+           Text="Build mode is incoherent with source provenance." />
+  </Target>
+
+  <ItemGroup Condition="'$(GHelperCanonicalLocalBuild)' == 'true'">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperImageInputSha256</_Parameter1>
+      <_Parameter2>$(GHelperImageInputSha256)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperCacheInputSha256</_Parameter1>
+      <_Parameter2>$(GHelperCacheInputSha256)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperBuildImageId</_Parameter1>
+      <_Parameter2>$(GHelperBuildImageId)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperNuGetManifestSha256</_Parameter1>
+      <_Parameter2>$(GHelperNuGetManifestSha256)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperBuildEnvironmentSha256</_Parameter1>
+      <_Parameter2>$(GHelperBuildEnvironmentSha256)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperSourceProvenance</_Parameter1>
+      <_Parameter2>$(SourceRevisionId)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>GHelperBuildMode</_Parameter1>
+      <_Parameter2>$(GHelperBuildMode)</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
   <!-- AOT trimmer configuration -->
@@ -81,13 +145,14 @@
 
   <!--
     Embed native .so libraries as resources for single-binary deployment.
-    At runtime, NativeLibExtractor extracts them to ~/.cache/ghelper/libs/
-    and preloads them before SkiaSharp/Avalonia initializes.
+    At runtime, NativeLibExtractor extracts them to the content-addressed
+    ~/.cache/ghelper/libs/<sha256>/ directory and preloads them before
+    SkiaSharp/Avalonia initializes.
   -->
   <Target Name="EmbedNativeLibraries" BeforeTargets="PrepareForBuild">
     <ItemGroup>
-      <!-- Native .so libraries: decompressed at first launch
-           by NativeLibExtractor to ~/.cache/ghelper/libs/ -->
+      <!-- Native .so libraries: decompressed at first launch by
+           NativeLibExtractor to ~/.cache/ghelper/libs/<sha256>/ -->
       <EmbeddedResource Include="../build/embedded/libSkiaSharp.so" Condition="Exists('../build/embedded/libSkiaSharp.so')" LogicalName="libSkiaSharp.so" />
       <EmbeddedResource Include="../build/embedded/libHarfBuzzSharp.so" Condition="Exists('../build/embedded/libHarfBuzzSharp.so')" LogicalName="libHarfBuzzSharp.so" />
       <!-- wlr-randr: Wayland display tool (vendored v0.5.0, MIT license).
@@ -96,10 +161,7 @@
       <!-- ghelper-audio: PipeWire helper with bundled rnnoise + parametric EQ + delay + reverb DSP.
            Built by build.sh from audio-helper/. Provides the virtual G-Helper Microphone source. -->
       <EmbeddedResource Include="../build/embedded/ghelper-audio" Condition="Exists('../build/embedded/ghelper-audio')" LogicalName="ghelper-audio" />
-      <EmbeddedResource Include="../vendor/gpu-helper/gpu-helper" LogicalName="gpu-helper" />
-      <!-- ryzenadj: upstream RyzenAdj CLI (static musl build from GitHub
-           releases, vendored in git). Updated via scripts/update-ryzenadj.sh. -->
-      <EmbeddedResource Include="../vendor/ryzenadj/ryzenadj" Condition="Exists('../vendor/ryzenadj/ryzenadj')" LogicalName="ryzenadj" />
+      <EmbeddedResource Include="../build/embedded/provenance.txt" Condition="Exists('../build/embedded/provenance.txt')" LogicalName="GHelper.Linux.BUILD_PROVENANCE" />
     </ItemGroup>
   </Target>
 

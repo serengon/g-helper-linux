@@ -37,9 +37,7 @@ public static class AppConfig
     // C# test harness can redirect them at runtime via ResetForTest(...).
     // In production they are written once at static-ctor time and never
     // mutated again.
-    private static string ConfigDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".config", "ghelper");
+    private static string ConfigDir = AbsoluteUserPaths.ConfigPath("ghelper");
 
     private static string ConfigFile = Path.Combine(ConfigDir, "config.json");
     private static string BackupFile = ConfigFile + ".bak";

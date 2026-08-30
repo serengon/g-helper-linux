@@ -14,8 +14,20 @@ public static class GpuQueryGate
 {
     private static DateTime _pausedUntilUtc = DateTime.MinValue;
     private static bool _held;
+    private static int _queryInFlight;
 
     public static bool IsPaused => _held || DateTime.UtcNow < _pausedUntilUtc;
+
+    /// <summary>
+    /// Serialize every NVIDIA userspace probe. The NVIDIA RM lock can wedge a
+    /// process in uninterruptible sleep; allowing timer callbacks to overlap
+    /// then creates an unbounded pile of /dev/nvidiactl holders.
+    /// </summary>
+    public static bool TryBeginQuery()
+        => !IsPaused && Interlocked.CompareExchange(ref _queryInFlight, 1, 0) == 0;
+
+    public static void EndQuery()
+        => Interlocked.Exchange(ref _queryInFlight, 0);
 
     public static void Pause(TimeSpan duration, string reason)
     {

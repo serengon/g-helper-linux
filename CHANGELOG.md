@@ -8,6 +8,12 @@
 
 ### Changed
 
+- X13 Phase 1 hardened fork: external privileged helpers, RyzenAdj execution,
+  NixOS helper discovery, self-install, and release publication are disabled.
+  Native cache payloads must match the exact embedded SHA-256 and are replaced
+  through a same-directory atomic rename. Entries below describe upstream
+  history and do not imply those disabled paths are available in this fork.
+
 ## v1.0.91 (2026-08-19)
 
 ### Added
@@ -433,7 +439,7 @@ The boot service unit was hardened. Updating the binary alone is not enough -
 re-run the install script so the new helper and sudoers file are deployed:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/utajum/g-helper-linux/master/install/install.sh | sudo bash
+[Upstream privileged installation command removed in the X13 hardened fork.]
 ```
 
 ### Added
@@ -518,7 +524,7 @@ Hotfix for release v1.0.75. On non Asus devices and non MUX Asus devices the GPU
 The GPU boot service files (`ghelper-gpu-boot.sh`, `gpu-block-helper.sh`, `ghelper-gpu-boot.service`) have been updated. Simply updating the binary is not enough - you must re-run the install script to get the new boot service:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/utajum/g-helper-linux/master/install/install.sh | sudo bash
+[Upstream privileged installation command removed in the X13 hardened fork.]
 ```
 
 ### GPU mode switching rework

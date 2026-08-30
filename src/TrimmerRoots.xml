@@ -11,7 +11,6 @@
       <field name="_statusNotifierItemDbusObj" />
     </type>
     <type fullname="Avalonia.FreeDesktop.StatusNotifierItemDbusObj" preserve="all" />
-    <type fullname="Tmds.DBus.SourceGenerator.OrgKdeStatusNotifierItemHandler" preserve="all" />
   </assembly>
 
 </linker>

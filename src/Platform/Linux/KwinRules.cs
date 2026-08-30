@@ -31,8 +31,7 @@ internal static class KwinRules
             if (!desktop.Contains("KDE", StringComparison.OrdinalIgnoreCase))
                 return;
 
-            string config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
-                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+            string config = AbsoluteUserPaths.ConfigRoot();
             string path = Path.Combine(config, "kwinrulesrc");
 
             string text = File.Exists(path) ? File.ReadAllText(path) : "";

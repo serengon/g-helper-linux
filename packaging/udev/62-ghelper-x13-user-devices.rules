@@ -1,0 +1,6 @@
+# Active-session access to the GV301QH keyboard/hotkey devices used by G-Helper.
+# Do not grant user access to the XG Mobile ITE 0b05:1970 controller; ghelperd
+# owns that privileged HID transport.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="19b6", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", KERNELS=="asus-nb-wmi", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="0b05", ATTRS{idProduct}=="19b6", TAG+="uaccess"

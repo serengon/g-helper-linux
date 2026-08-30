@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <!--
+      Dependency graph changes must be deliberate. To update a lock file, run
+      restore once with -p:RestoreLockedMode=false and review the resulting
+      packages.lock.json diff.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(RestoreLockedMode)' == ''">true</RestoreLockedMode>
+    <!-- NuGet audit queries a remote vulnerability feed even for an otherwise
+         locked/offline restore. Phase 1 performs no implicit network query. -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+</Project>

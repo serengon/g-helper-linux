@@ -359,14 +359,14 @@
                               IsCheckedChanged="CheckSilentStart_Changed" />
 
                     <CheckBox x:Name="checkSkipSysfilesPopup" Content="Don't check system files on startup"
-                              Margin="0,4"
+                              Margin="0,4" IsVisible="False"
                               IsCheckedChanged="CheckSkipSysfilesPopup_Changed" />
 
                     <CheckBox x:Name="checkUdevPerMachine" Content="Tailor udev rules to this machine"
-                              Margin="0,4"
+                              Margin="0,4" IsVisible="False"
                               IsCheckedChanged="CheckUdevPerMachine_Changed" />
                     <TextBlock x:Name="labelUdevPerMachineHint"
-                               Classes="hint" Margin="24,0,0,4"
+                               Classes="hint" Margin="24,0,0,4" IsVisible="False"
                                TextWrapping="Wrap" />
 
                     <Grid ColumnDefinitions="*,160" Margin="0,4">
@@ -379,10 +379,6 @@
                     <TextBlock x:Name="labelRenderModeHint"
                                Classes="hint" Margin="0,0,0,4"
                                TextWrapping="Wrap" />
-
-                    <CheckBox x:Name="checkSkipUpdatePrompt" Content="Don't check for updates on startup"
-                              Margin="0,4"
-                              IsCheckedChanged="CheckSkipUpdatePrompt_Changed" />
 
                     <CheckBox x:Name="checkDisableAudio" Content="Disable virtual microphone"
                               Margin="0,4"

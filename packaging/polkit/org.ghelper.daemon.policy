@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <!-- Live XG Mobile switching is the first enabled privileged operation. -->
+  <vendor>G-Helper Linux X13</vendor>
+  <vendor_url>https://github.com/utajum/g-helper-linux</vendor_url>
+
+  <action id="org.ghelper.daemon.set-platform-profile">
+    <description>Change the laptop platform profile</description>
+    <message>Authentication is required to change the laptop platform profile</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+  <action id="org.ghelper.daemon.set-charge-limit">
+    <description>Change the battery charge limit</description>
+    <message>Authentication is required to change the battery charge limit</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+  <action id="org.ghelper.daemon.set-fan-curve">
+    <description>Change a hardware fan curve</description>
+    <message>Authentication is required to change a hardware fan curve</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
+  </action>
+  <action id="org.ghelper.daemon.set-gpu-mode">
+    <description>Change the discrete GPU mode</description>
+    <message>The active local session may change the discrete GPU mode</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+  <action id="org.ghelper.daemon.set-xg-mode">
+    <description>Change the XG Mobile connection mode</description>
+    <message>The active local session may change the XG Mobile connection mode</message>
+    <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults>
+  </action>
+</policyconfig>

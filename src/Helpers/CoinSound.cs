@@ -35,9 +35,7 @@ public static class CoinSound
         }
         Logger.WriteLine($"CoinSound: using {_player}");
 
-        var cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache", "ghelper");
+        var cacheDir = AbsoluteUserPaths.CachePath("ghelper");
         Directory.CreateDirectory(cacheDir);
 
         _wavPath = Path.Combine(cacheDir, "coin.wav");

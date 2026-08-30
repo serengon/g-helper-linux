@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=G-Helper X13
+Comment=ASUS ROG Flow X13 controls and live XG Mobile switching
+Exec=/opt/ghelper-xg-mvp/ghelper
+Icon=preferences-system
+Terminal=false
+StartupNotify=true
+StartupWMClass=ghelper

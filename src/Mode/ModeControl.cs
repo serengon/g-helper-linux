@@ -96,6 +96,9 @@ public class ModeControl
     /// </summary>
     public void SetPerformanceMode(int mode = -1, bool notify = false)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("performance mode"))
+            return;
+
         int oldMode = Modes.GetCurrent();
         if (mode < 0)
             mode = oldMode;

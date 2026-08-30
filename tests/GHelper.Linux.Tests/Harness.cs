@@ -26,12 +26,11 @@ public static class Harness
 
         public Sandbox(string scenarioName)
         {
-            // GHELPER_TEST_ROOT is consumed at static-ctor time of
-            // GPUModeControl, so we cannot vary it per scenario. Place
-            // all scenarios under a shared root that was set before the
-            // first SUT touch (see Program.Main).
-            string root = Environment.GetEnvironmentVariable("GHELPER_TEST_ROOT")
-                ?? throw new InvalidOperationException("GHELPER_TEST_ROOT not set - Program.Main must set it before any GPUModeControl access");
+            // The test-only hook is configured once by Program.Main. It is not
+            // present in the production application assembly.
+            string root = GPUModeControl.TestPathPrefix;
+            if (string.IsNullOrEmpty(root))
+                throw new InvalidOperationException("test sandbox not configured");
             TempRoot = root;
 
             // Wipe every test path so each scenario starts clean.

@@ -43,7 +43,7 @@ public partial class NumberPadWindow : Window
                 break;
             case NumberPad.ProbeStatus.PermissionDenied:
                 labelStatus.Text = $"No write access to {probe.Detail}";
-                labelHint.Text = "Install the bundled udev rules (install/90-ghelper.rules) and reload them, or chmod the device manually.";
+                labelHint.Text = "Hardware access is unavailable. The hardened package path is still under development.";
                 break;
         }
 

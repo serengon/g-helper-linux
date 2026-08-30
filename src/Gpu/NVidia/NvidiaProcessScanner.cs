@@ -2,17 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Threading;
 using GHelper.Linux.Helpers;
-using GHelper.Linux.Install;
 using GHelper.Linux.Platform.Linux;
 
 namespace GHelper.Linux.Gpu.NVidia;
 
 /// <summary>
-/// Sync state of the on-disk gpu-helper vs the copy embedded in this ghelper
-/// binary. Drives the startup self-update prompt.
+/// Availability state of a future package-managed on-disk gpu-helper.
 /// </summary>
 public enum HelperState { InSync, Stale, Missing }
 
@@ -48,15 +45,9 @@ public static class NvidiaProcessScanner
 
     private static readonly int _selfPid = Environment.ProcessId;
 
-    private static readonly string HelperPath = SysfsHelper.GpuHelperPath;
-    private static volatile bool _helperChecked;
-    private static readonly object _helperLock = new();
-
     private static readonly object _privCacheLock = new();
-    private static DateTime _privCacheTime = DateTime.MinValue;
-    private static List<NvidiaHolder>? _privCacheResults;
     private static List<string> _filteredSystemCache = new();
-    private const int PrivilegedCacheSeconds = 5;
+    private static List<string> _lastLoggedSystemSnapshot = new();
 
     /// <summary>
     /// Formatted strings for system processes filtered from the last scan.
@@ -144,8 +135,7 @@ public static class NvidiaProcessScanner
     {
         lock (_privCacheLock)
         {
-            _privCacheTime = DateTime.MinValue;
-            _privCacheResults = null;
+            _filteredSystemCache = new();
         }
         // The nvidia DRM card / I2C adapter numbers are dynamically allocated
         // and shift across driver unload/reload cycles (Eco<->Standard) - the
@@ -202,9 +192,15 @@ public static class NvidiaProcessScanner
 
         // Unprivileged path has no separate cache; store filtered list so
         // LogHoldersSnapshot can pick it up via GetFilteredSystemProcesses().
+        bool filteredSnapshotChanged;
         lock (_privCacheLock)
+        {
+            filteredSnapshotChanged = !_lastLoggedSystemSnapshot.SequenceEqual(sysFiltered);
             _filteredSystemCache = sysFiltered;
-        if (sysFiltered.Count > 0)
+            if (filteredSnapshotChanged)
+                _lastLoggedSystemSnapshot = sysFiltered.ToList();
+        }
+        if (filteredSnapshotChanged && sysFiltered.Count > 0)
             Helpers.Logger.WriteLine($"NvidiaProcessScanner: system holders (won't kill): [{string.Join(", ", sysFiltered)}]");
 
         return new List<NvidiaHolder>(holders.Values);
@@ -258,198 +254,26 @@ public static class NvidiaProcessScanner
 
     private static List<NvidiaHolder>? TryPrivilegedScanCached()
     {
-        lock (_privCacheLock)
-        {
-            if (_privCacheResults != null
-                && (DateTime.UtcNow - _privCacheTime).TotalSeconds < PrivilegedCacheSeconds)
-                return _privCacheResults;
-        }
-
-        if (!EnsureHelper())
-            return null;
-
-        var sudoArgs = new[] { "-n", HelperPath, "list", _selfPid.ToString() };
-        var output = SysfsHelper.RunCommandWithTimeout(SysfsHelper.SudoPath, sudoArgs, 3000);
-        if (output == null)
-            return null; // sudoers rejected or helper failed - fall through to unprivileged scan
-
-        var holders = new Dictionary<int, NvidiaHolder>();
-        var sysFiltered = new List<string>();
-        int rawCount = 0;
-        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = line.Split('\t');
-            if (parts.Length < 4)
-                continue;
-            if (!int.TryParse(parts[0], out int pid))
-                continue;
-            if (!int.TryParse(parts[1], out int fdCount))
-                continue;
-            if (!uint.TryParse(parts[2], out uint procUid))
-                continue;
-            string comm = parts[3];
-            int libsMapped = (parts.Length >= 5 && int.TryParse(parts[4], out int lm)) ? lm : 0;
-            string serviceUnit = (parts.Length >= 6 && parts[5] != "-") ? parts[5] : "";
-            int driFds = (parts.Length >= 7 && int.TryParse(parts[6], out int df)) ? df : 0;
-            int i2cFds = (parts.Length >= 8 && int.TryParse(parts[7], out int ic)) ? ic : 0;
-
-            if (fdCount == 0 && libsMapped == 0 && driFds == 0 && i2cFds == 0)
-                continue;
-            rawCount++;
-
-            // System processes (NVIDIA daemons, DE shells, portals etc.) are
-            // never killed but logged so they show up in diagnostics.
-            if (IsSystemProcess(comm))
-            {
-                sysFiltered.Add(FormatHolderBrief(pid, comm, ResolveUserName(procUid), fdCount, driFds, i2cFds));
-                continue;
-            }
-
-            string user = ResolveUserName(procUid);
-            bool owned = procUid == _currentUid.Value;
-            holders[pid] = new NvidiaHolder(pid, comm, user, fdCount, libsMapped, owned, serviceUnit, driFds, i2cFds);
-        }
-        if (rawCount > 0)
-            Helpers.Logger.WriteLine($"NvidiaProcessScanner: {rawCount} raw, {sysFiltered.Count} filtered system, {holders.Count} shown");
-        if (sysFiltered.Count > 0)
-            Helpers.Logger.WriteLine($"NvidiaProcessScanner: system holders (won't kill): [{string.Join(", ", sysFiltered)}]");
-
-        var result = new List<NvidiaHolder>(holders.Values);
-        lock (_privCacheLock)
-        {
-            _privCacheResults = result;
-            _filteredSystemCache = sysFiltered;
-            _privCacheTime = DateTime.UtcNow;
-        }
-        return result;
+        // Phase 1 has no package-managed helper attestation. Never probe paths,
+        // sudo rules, or external executables; use the read-only /proc scan.
+        return null;
     }
 
     public static bool EnsureHelper()
     {
-        // Cheap re-check on every call: a later install (via the startup
-        // system-files prompt or its Install/Repair button) is picked up at once.
-        if (File.Exists(HelperPath))
-            return true;
-        if (_helperChecked)
-            return false; // self-install already attempted/decided this process
-
-        // Don't race the startup system-files prompt's pkexec: wait for the user's
-        // decision first. No-op on the UI thread and once the decision is made, so
-        // this never blocks the thread showing the (modal) prompt. Done OUTSIDE
-        // the lock below so a long wait can't block UI-thread callers on the lock.
-        Installer.WaitForStartupDecision();
-
-        // The prompt may have just installed the helper.
-        if (File.Exists(HelperPath))
-            return true;
-
-        // When the startup prompt criteria were met, that prompt owns the
-        // gpu-helper install. It is still absent here => either it is mid-flight
-        // or the user declined; in both cases we must NOT fire a second, competing
-        // pkexec (the user's rule: the same check that shows the window cancels
-        // this self-install).
-        if (Installer.StartupWillPrompt)
-        {
-            _helperChecked = true;
-            Helpers.Logger.WriteLine(
-                "NvidiaProcessScanner: startup system-files prompt handles gpu-helper - skipping self-install pkexec");
-            return false;
-        }
-
-        // No prompt in play (check disabled, or no other problems): self-install,
-        // serialized so concurrent callers can't fire two pkexec dialogs.
-        lock (_helperLock)
-        {
-            if (File.Exists(HelperPath))
-                return true;
-            if (_helperChecked)
-                return false;
-            _helperChecked = true;
-            Helpers.Logger.WriteLine(
-                $"NvidiaProcessScanner: {HelperPath} not found - attempting pkexec self-install");
-            return RunPkexecInstall();
-        }
+        Helpers.Logger.WriteLine(
+            "NvidiaProcessScanner: external gpu-helper refused; package attestation is unavailable");
+        return false;
     }
 
     public static HelperState CheckHelper()
-    {
-        try
-        {
-            if (!File.Exists(HelperPath))
-                return HelperState.Missing;
-
-            using var res = typeof(NvidiaProcessScanner).Assembly
-                .GetManifestResourceStream("gpu-helper");
-            if (res == null)
-                return HelperState.InSync; // no embedded copy to compare against
-
-            using var sha = SHA256.Create();
-            byte[] embedded = sha.ComputeHash(res);
-            byte[] installed;
-            using (var fs = File.OpenRead(HelperPath))
-                installed = sha.ComputeHash(fs);
-
-            return embedded.AsSpan().SequenceEqual(installed)
-                ? HelperState.InSync
-                : HelperState.Stale;
-        }
-        catch (Exception ex)
-        {
-            Helpers.Logger.WriteLine($"NvidiaProcessScanner: CheckHelper failed: {ex.Message}");
-            return HelperState.InSync;
-        }
-    }
+        => HelperState.Missing;
 
     public static bool RunPkexecInstall()
     {
-        // Under an AppImage, ProcessPath is inside the per-user FUSE mount which
-        // root cannot read; resolve a root-runnable copy (deleted on dispose,
-        // after pkexec returns).
-        using var self = LinuxSystemIntegration.ResolvePrivilegedSelf();
-        if (string.IsNullOrEmpty(self.Path) || !File.Exists(self.Path))
-        {
-            Helpers.Logger.WriteLine(
-                "NvidiaProcessScanner: cannot self-install scan helper - executable path unknown");
-            return false;
-        }
-
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "pkexec",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add(self.Path);
-            psi.ArgumentList.Add("--install-gpu-helper");
-            psi.ArgumentList.Add(Path.GetDirectoryName(HelperPath)!);
-
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null)
-                return false;
-
-            var stdout = proc.StandardOutput.ReadToEnd().Trim();
-            var stderr = proc.StandardError.ReadToEnd().Trim();
-            proc.WaitForExit(60000);
-
-            bool ok = File.Exists(HelperPath);
-            if (!string.IsNullOrEmpty(stdout))
-                Helpers.Logger.WriteLine($"NvidiaProcessScanner: install-gpu-helper: {stdout}");
-            if (!string.IsNullOrEmpty(stderr))
-                Helpers.Logger.WriteLine($"NvidiaProcessScanner: install-gpu-helper stderr: {stderr}");
-            Helpers.Logger.WriteLine(ok
-                ? "NvidiaProcessScanner: gpu-helper installed OK"
-                : $"NvidiaProcessScanner: gpu-helper install failed (exit {proc.ExitCode})");
-            return ok;
-        }
-        catch (Exception ex)
-        {
-            Helpers.Logger.WriteLine($"NvidiaProcessScanner: pkexec self-install exception: {ex.Message}");
-            return false;
-        }
+        Helpers.Logger.WriteLine(
+            "NvidiaProcessScanner: pkexec self-install refused; hardened helper installer is unavailable");
+        return false;
     }
 
     private static bool IsNvidiaDevice(string path)
@@ -1064,28 +888,7 @@ public static class NvidiaProcessScanner
     /// Pids with a live GPU context per NVML (graphics + compute), via the
     /// root helper. Empty on any failure (helper missing, driver unloaded).
     private static IReadOnlyList<int> TryNvmlPids()
-    {
-        var result = new List<int>();
-        try
-        {
-            if (!File.Exists(HelperPath))
-                return result;
-            var output = SysfsHelper.RunCommandWithTimeout(
-                SysfsHelper.SudoPath, new[] { "-n", HelperPath, "nvml-procs" }, 5000);
-            if (output == null)
-                return result;
-            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var parts = line.Split('\t');
-                if (int.TryParse(parts[0], out int pid) && pid > 0)
-                    result.Add(pid);
-            }
-        }
-        catch
-        {
-        }
-        return result;
-    }
+        => [];
 
     private static void SendKillBatch(ICollection<int> pids, string sig)
         => KillViaHelper(pids, sig);
@@ -1095,31 +898,8 @@ public static class NvidiaProcessScanner
         if (pids.Count == 0)
             return;
 
-        if (EnsureHelper())
-        {
-            var args = new string[pids.Count + 2];
-            args[0] = "kill";
-            args[1] = sig;
-            int j = 2;
-            foreach (var p in pids)
-                args[j++] = p.ToString();
-            var r = SysfsHelper.RunSudoOrPkexec(HelperPath, args, sudoTimeoutMs: 20000, pkexecTimeoutMs: 60000);
-            if (r != null)
-            {
-                if (!string.IsNullOrWhiteSpace(r))
-                {
-                    foreach (var line in r.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        string trimmed = line.Trim();
-                        Logger.WriteLine($"NvidiaProcessScanner.KillViaHelper: {trimmed}");
-                        RecordStoppedUnit(trimmed);
-                    }
-                }
-                return;
-            }
-            Logger.WriteLine("NvidiaProcessScanner.KillViaHelper: helper kill failed, falling back to plain kill");
-        }
-
+        // Only signal processes owned by the current user. Cross-user killing
+        // requires the future attested privileged service and is unavailable.
         string pidArgs = string.Join(' ', pids);
         SysfsHelper.RunCommandWithTimeout("kill", $"{sig} {pidArgs}", 5000);
     }

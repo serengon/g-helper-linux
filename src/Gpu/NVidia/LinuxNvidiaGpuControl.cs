@@ -47,6 +47,34 @@ public class LinuxNvidiaGpuControl : IGpuControl
 
     public string? GetGpuName() => _gpuName;
 
+    /// <summary>Shared fan query for platform sensor fallbacks. It must use
+    /// the same serialization and fail-closed gate as all other NVIDIA
+    /// telemetry; direct nvidia-smi calls can accumulate D-state holders.</summary>
+    public static int? GetFanPercentViaSmi()
+    {
+        var output = RunNvidiaSmi(
+            "--query-gpu=fan.speed", "--format=csv,noheader,nounits");
+        return !string.IsNullOrWhiteSpace(output)
+            && int.TryParse(output.Trim(), out int fanPercent)
+            && fanPercent >= 0
+                ? fanPercent
+                : null;
+    }
+
+    /// <summary>Temperature fallback through the shared NVIDIA query gate.
+    /// Platform backends must not fork nvidia-smi directly because that would
+    /// bypass transition serialization and the permanent circuit breaker.</summary>
+    public static int? GetTempViaSmi()
+    {
+        var output = RunNvidiaSmi(
+            "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits");
+        return !string.IsNullOrWhiteSpace(output)
+            && int.TryParse(output.Trim(), out int temperature)
+            && temperature > 0
+                ? temperature
+                : null;
+    }
+
     /// <summary>
     /// Fast GPU temp read via gpu-helper nvml-temp (~5ms, no nvidia-smi fork).
     /// Returns the temperature in Celsius or -1 on failure.
@@ -95,11 +123,7 @@ public class LinuxNvidiaGpuControl : IGpuControl
         }
 
         // Method 2: nvidia-smi
-        var output = RunNvidiaSmi("--query-gpu=temperature.gpu", "--format=csv,noheader,nounits");
-        if (output != null && int.TryParse(output.Trim(), out int smiTemp))
-            return smiTemp;
-
-        return null;
+        return GetTempViaSmi();
     }
 
     // Utilization
@@ -276,7 +300,7 @@ public class LinuxNvidiaGpuControl : IGpuControl
             if (!NvidiaProcessScanner.EnsureHelper())
             {
                 Helpers.Logger.WriteLine(
-                    "NVIDIA: gpu-helper not available - clock offsets skipped (re-run install script)");
+                    "NVIDIA: gpu-helper unavailable - clock offsets skipped; hardened installer is not available yet");
             }
             else
             {
@@ -718,15 +742,18 @@ public class LinuxNvidiaGpuControl : IGpuControl
     // failures we stop calling nvidia-smi for a cooldown window.
     private static int _smiFailStreak;
     private static DateTime _smiCooldownUntilUtc;
-    private const int SmiTimeoutMs = 1200;
-    private const int SmiFailThreshold = 2;
+    // The 610 open module on the GV301QH/XG takes about 1.9 s for a healthy
+    // query after S0ix is enabled. Keep the breaker bounded, but do not classify
+    // that measured wake latency as a wedged GPU.
+    private const int SmiTimeoutMs = 3000;
+    private const int SmiFailThreshold = 1;
     private static readonly TimeSpan SmiCooldown = TimeSpan.FromSeconds(15);
 
     // A wedged driver leaves each timed-out nvidia-smi stuck in uninterruptible
     // sleep holding the NVML rwlock, so it can never be reaped and every later
     // one blocks behind it. Repeating a 15s cooldown forever just grows that
     // pile, so give up entirely once this many cooldowns pass with no success.
-    private const int SmiCooldownsBeforeHold = 4;
+    private const int SmiCooldownsBeforeHold = 1;
 
     // dGPU runtime-PM guard. A runtime-suspended (D3cold) dGPU is healthy but
     // powered down. Reading power/runtime_status is passive, but any nvidia-smi
@@ -774,6 +801,26 @@ public class LinuxNvidiaGpuControl : IGpuControl
     /// timer on every query, so it never reaches D3cold (issue #157).</summary>
     public static bool ShouldSkipDgpuTelemetry()
     {
+        // The live-XG POC must leave the internal NVIDIA endpoint completely
+        // idle while the dock is connected but disabled. Any monitor process
+        // becomes a holder that prevents the daemon from swapping endpoints.
+        if (Helpers.RuntimeMode.IsPocFunctional)
+        {
+            string? connectedPath = SysfsHelper.ResolveAttrPath(AsusAttributes.EgpuConnected);
+            string? enabledPath = SysfsHelper.ResolveAttrPath(AsusAttributes.EgpuEnable);
+            if (connectedPath != null && enabledPath != null
+                && SysfsHelper.ReadAttribute(connectedPath) != "0")
+            {
+                // A connected but disabled dock exposes the internal NVIDIA
+                // endpoint at the same BDF. Never wake or retain it because
+                // the daemon must be able to swap it for the XG GPU. Once the
+                // XG is enabled, however, the dock supplies external power and
+                // its telemetry must remain live instead of being hidden by
+                // the generic runtime-PM idle heuristic below.
+                return SysfsHelper.ReadAttribute(enabledPath) == "0";
+            }
+        }
+
         if (IsDgpuSuspended())
             return true;
         if (_rtStatusPath == null)
@@ -803,38 +850,49 @@ public class LinuxNvidiaGpuControl : IGpuControl
         if (GpuQueryGate.IsPaused)
             return null;
 
-        // Never wake a runtime-suspended dGPU just to read telemetry.
-        if (IsDgpuSuspended())
+        // Never wake an idle/suspended dGPU or touch the internal endpoint
+        // while the connected XG dock is disabled.
+        if (ShouldSkipDgpuTelemetry())
             return null;
 
         if (DateTime.UtcNow < _smiCooldownUntilUtc)
             return null;
 
-        var args = string.IsNullOrEmpty(format) ? query : $"{query} {format}";
-        var result = SysfsHelper.RunCommandWithTimeout("nvidia-smi", args, SmiTimeoutMs);
+        if (!GpuQueryGate.TryBeginQuery())
+            return null;
 
-        if (result == null)
+        try
         {
-            if (++_smiFailStreak >= SmiFailThreshold)
+            var args = string.IsNullOrEmpty(format) ? query : $"{query} {format}";
+            var result = SysfsHelper.RunCommandWithTimeout("nvidia-smi", args, SmiTimeoutMs);
+
+            if (result == null)
             {
-                int cooldowns = _smiFailStreak - SmiFailThreshold + 1;
-                if (cooldowns >= SmiCooldownsBeforeHold)
+                if (++_smiFailStreak >= SmiFailThreshold)
                 {
-                    GpuQueryGate.Hold("nvidia-smi wedged - dGPU not responding");
-                }
-                else
-                {
-                    _smiCooldownUntilUtc = DateTime.UtcNow + SmiCooldown;
-                    Helpers.Logger.WriteLine(
-                        $"NVIDIA: nvidia-smi unresponsive - pausing GPU queries for {SmiCooldown.TotalSeconds:0}s"
-                        + $" ({cooldowns}/{SmiCooldownsBeforeHold} before giving up)");
+                    int cooldowns = _smiFailStreak - SmiFailThreshold + 1;
+                    if (cooldowns >= SmiCooldownsBeforeHold)
+                    {
+                        GpuQueryGate.Hold("nvidia-smi wedged - dGPU not responding");
+                    }
+                    else
+                    {
+                        _smiCooldownUntilUtc = DateTime.UtcNow + SmiCooldown;
+                        Helpers.Logger.WriteLine(
+                            $"NVIDIA: nvidia-smi unresponsive - pausing GPU queries for {SmiCooldown.TotalSeconds:0}s"
+                            + $" ({cooldowns}/{SmiCooldownsBeforeHold} before giving up)");
+                    }
                 }
             }
+            else
+            {
+                _smiFailStreak = 0;
+            }
+            return result;
         }
-        else
+        finally
         {
-            _smiFailStreak = 0;
+            GpuQueryGate.EndQuery();
         }
-        return result;
     }
 }

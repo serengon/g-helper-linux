@@ -13,9 +13,7 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     public LinuxSystemIntegration()
     {
-        _autostartDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".config", "autostart");
+        _autostartDir = Helpers.AbsoluteUserPaths.ConfigPath("autostart");
         _desktopFilePath = Path.Combine(_autostartDir, "ghelper.desktop");
     }
 
@@ -43,6 +41,17 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     public string GetKernelVersion()
     {
+        if (Helpers.RuntimeMode.IsPocReadOnly)
+        {
+            try
+            {
+                return File.ReadAllText("/proc/sys/kernel/osrelease").Trim();
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
         return SysfsHelper.RunCommand("uname", "-r") ?? "Unknown";
     }
 
@@ -64,6 +73,9 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     public void SetAutostart(bool enabled)
     {
+        if (!Helpers.RuntimeMode.TryAllowMutation("autostart"))
+            return;
+
         if (enabled)
         {
             Directory.CreateDirectory(_autostartDir);
@@ -546,9 +558,9 @@ public class LinuxSystemIntegration : ISystemIntegration
 
     // COSMIC Wayland: write config file, cosmic-comp watches it via inotify
 
-    private static readonly string CosmicTouchpadOverridePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".config/cosmic/com.system76.CosmicComp/v1/input_touchpad_override");
+    private static readonly string CosmicTouchpadOverridePath =
+        Helpers.AbsoluteUserPaths.ConfigPath(
+            "cosmic", "com.system76.CosmicComp", "v1", "input_touchpad_override");
 
     private static bool? IsTouchpadEnabledCosmic()
     {

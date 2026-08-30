@@ -1,24 +1,19 @@
 using System.Diagnostics;
-using System.Net.Http;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using GHelper.Linux.Helpers;
 using GHelper.Linux.I18n;
 
 namespace GHelper.Linux.UI.Views;
 
-// Renders the project CHANGELOG.md inside an Avalonia window. Fetches the
-// live copy from GitHub raw on Loaded, falls back to the binary's embedded
-// copy if the network fails. Images are fetched async by the renderer.
+// Renders the immutable CHANGELOG.md embedded at build time. This hardened
+// fork never fetches release notes from a moving branch.
 public partial class ChangelogWindow : Window
 {
-    private const string ChangelogUrl =
-        "https://raw.githubusercontent.com/utajum/g-helper-linux/master/CHANGELOG.md";
     private const string ChangelogBrowserUrl =
-        "https://github.com/utajum/g-helper-linux/blob/master/CHANGELOG.md";
+        "https://github.com/utajum/g-helper-linux/blob/9e99e21153a7cf75dd1682425bf1bd3d1b1de43a/CHANGELOG.md";
     private const string EmbeddedResourceName = "GHelper.Linux.CHANGELOG.md";
 
     private readonly List<Bitmap> _bitmapSink = new();
@@ -30,7 +25,7 @@ public partial class ChangelogWindow : Window
         Labels.LanguageChanged += ApplyLabels;
         ApplyLabels();
 
-        Loaded += (_, _) => _ = LoadAsync();
+        Loaded += (_, _) => LoadEmbeddedChangelog();
         Closed += (_, _) => DisposeBitmaps();
     }
 
@@ -42,40 +37,17 @@ public partial class ChangelogWindow : Window
         labelLoading.Text = Labels.Get("changelog_loading");
     }
 
-    private async Task LoadAsync()
+    private void LoadEmbeddedChangelog()
     {
-        string? markdown = await FetchRemoteAsync();
-        string source = "network";
+        string? markdown = LoadEmbedded();
         if (markdown == null)
         {
-            markdown = LoadEmbedded();
-            source = "embedded";
-        }
-        if (markdown == null)
-        {
-            await Dispatcher.UIThread.InvokeAsync(() => ShowError(Labels.Get("changelog_load_failed")));
+            ShowError(Labels.Get("changelog_load_failed"));
             return;
         }
-        Logger.WriteLine($"ChangelogWindow: rendering changelog from {source} ({markdown.Length} chars)");
+        Logger.WriteLine($"ChangelogWindow: rendering embedded changelog ({markdown.Length} chars)");
         var blocks = ChangelogParser.Parse(markdown);
-        await Dispatcher.UIThread.InvokeAsync(() => Render(blocks));
-    }
-
-    private static async Task<string?> FetchRemoteAsync()
-    {
-        try
-        {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.Add("User-Agent",
-                "G-Helper-Linux/" + AppConfig.AppVersion);
-            http.Timeout = TimeSpan.FromSeconds(8);
-            return await http.GetStringAsync(ChangelogUrl);
-        }
-        catch (Exception ex)
-        {
-            Logger.WriteLine($"ChangelogWindow: remote fetch failed: {ex.Message}");
-            return null;
-        }
+        Render(blocks);
     }
 
     private static string? LoadEmbedded()

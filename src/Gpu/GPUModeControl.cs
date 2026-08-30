@@ -231,6 +231,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult RequestModeSwitch(GpuMode target)
     {
+        if (!RuntimeMode.TryAllowMutation($"GPU mode switch to {target}"))
+            return GpuSwitchResult.Failed;
+
         if (!_switchLock.Wait(0))
         {
             // A hardware switch is blocking - can't start another.
@@ -419,6 +422,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult ScheduleModeForReboot(GpuMode target)
     {
+        if (!RuntimeMode.TryAllowMutation($"GPU mode schedule to {target}"))
+            return GpuSwitchResult.Failed;
+
         Logger.WriteLine($"GPUModeControl: ScheduleModeForReboot({target})");
 
         // SAFETY: If scheduling Eco but MUX is latched to 0, the user changed from
@@ -490,6 +496,9 @@ public class GPUModeControl
     /// </summary>
     public GpuSwitchResult ApplyPendingOnStartup()
     {
+        if (!RuntimeMode.TryAllowMutation("GPU pending startup apply"))
+            return GpuSwitchResult.AlreadySet;
+
         // Clear stale MUX=0 latch flag on reboot detection. Runs FIRST,
         // before any backend-specific path, because the persistent flag is
         // session-scoped and must not leak across boots regardless of which
@@ -746,6 +755,9 @@ public class GPUModeControl
     /// </summary>
     public void ApplyPendingOnShutdown()
     {
+        if (!RuntimeMode.TryAllowMutation("GPU pending shutdown apply"))
+            return;
+
         try
         {
             // PCI backend: the boot service applies pending modes on the
@@ -2678,36 +2690,7 @@ public class GPUModeControl
 
     private static (int exitCode, string stderr) RunRmmod(string module)
     {
-        try
-        {
-            // Route through the root helper (helper execv's rmmod, so its
-            // stderr/exit propagate verbatim and the parsing below still works).
-            var psi = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = SysfsHelper.SudoPath,
-                Arguments = $"-n {SysfsHelper.GpuHelperPath} rmmod {module}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            using var proc = System.Diagnostics.Process.Start(psi);
-            if (proc == null)
-                return (-1, "");
-            if (!proc.WaitForExit(5000))
-            {
-                try
-                { proc.Kill(); }
-                catch { }
-                return (-1, "timeout");
-            }
-            string stderr = proc.StandardError.ReadToEnd();
-            return (proc.ExitCode, stderr);
-        }
-        catch (Exception ex)
-        {
-            return (-1, ex.Message);
-        }
+        return (126, "package attestation unavailable");
     }
 
     /// <summary>
@@ -3032,25 +3015,35 @@ public class GPUModeControl
     // Driver block - prevent dGPU driver loading + remove PCI devices for Eco boot
 
     /// <summary>
-    /// Optional root prefix for the four ghelper system paths. Empty in
-    /// production (paths resolve under real /etc); the test harness sets
-    /// <c>GHELPER_TEST_ROOT=/tmp/scenario-N</c> so writes are confined to a
-    /// sandbox and the sudo / pkexec branches can be skipped.
-    /// Mirrors the same env var the boot-script test harness uses.
+    /// Optional root prefix compiled only into the dedicated scenario-test
+    /// assembly. The production application has no environment-controlled
+    /// path-redirection bypass.
     /// </summary>
-    internal static readonly string TestPathPrefix =
-        Environment.GetEnvironmentVariable("GHELPER_TEST_ROOT") ?? "";
+#if GHELPER_TESTS
+    internal static string TestPathPrefix { get; private set; } = "";
+
+    internal static void ConfigureTestPathPrefix(string path)
+    {
+        if (!Path.IsPathFullyQualified(path) || path == Path.GetPathRoot(path)
+            || !Directory.Exists(path))
+            throw new ArgumentException("Test path must be an existing absolute sandbox", nameof(path));
+        TestPathPrefix = Path.GetFullPath(path);
+    }
 
     internal static bool IsTestMode => !string.IsNullOrEmpty(TestPathPrefix);
+#else
+    internal static string TestPathPrefix => "";
+    internal static bool IsTestMode => false;
+#endif
 
     /// <summary>Path to modprobe.d file that blocks dGPU driver loading (NVIDIA + AMD).</summary>
-    internal static readonly string ModprobeBlockPath = TestPathPrefix + "/etc/modprobe.d/ghelper-gpu-block.conf";
+    internal static string ModprobeBlockPath => TestPathPrefix + "/etc/modprobe.d/ghelper-gpu-block.conf";
 
     /// <summary>Path to udev rule that removes dGPU PCI devices from the bus (NVIDIA + AMD).</summary>
-    internal static readonly string UdevRemovePath = TestPathPrefix + "/etc/udev/rules.d/50-ghelper-remove-dgpu.rules";
+    internal static string UdevRemovePath => TestPathPrefix + "/etc/udev/rules.d/50-ghelper-remove-dgpu.rules";
 
     /// <summary>Path to trigger file read by ghelper on startup.</summary>
-    internal static readonly string TriggerPath = TestPathPrefix + "/etc/ghelper/pending-gpu-mode";
+    internal static string TriggerPath => TestPathPrefix + "/etc/ghelper/pending-gpu-mode";
 
     /// <summary>
     /// Persistent Eco marker. Unlike TriggerPath (consumed after one boot),
@@ -3058,10 +3051,10 @@ public class GPUModeControl
     /// absent, the boot script treats its content as the pending mode, making
     /// Eco survive reboots on firmware that forgets dgpu_disable.
     /// </summary>
-    internal static readonly string PersistentTriggerPath = TestPathPrefix + "/etc/ghelper/persistent-gpu-mode";
+    internal static string PersistentTriggerPath => TestPathPrefix + "/etc/ghelper/persistent-gpu-mode";
 
     /// <summary>Path to backend selector file. Content "asus-wmi" or "pci".</summary>
-    internal static readonly string BackendPath = TestPathPrefix + "/etc/ghelper/backend";
+    internal static string BackendPath => TestPathPrefix + "/etc/ghelper/backend";
 
     /// <summary>
     /// In-process replacement for the sudo/pkexec helper calls when running
@@ -3147,47 +3140,13 @@ public class GPUModeControl
         }
     }
 
-    /// <summary>Known locations for the GPU block helper script (installed by install-local.sh).</summary>
-    private static readonly string[] HelperSearchPaths = new[]
-    {
-        "/usr/local/lib/ghelper/gpu-block-helper.sh",
-        "/opt/ghelper/gpu-block-helper.sh",
-    };
-
-    /// <summary>Cached path to the helper script. Null if not found.</summary>
-    private static string? _cachedHelperPath;
-    private static bool _helperPathScanned;
-
     /// <summary>
-    /// Find the GPU block helper script. Checked once and cached.
-    /// Returns null if not found (falls back to pkexec).
+    /// External block helpers are not discoverable until a package-managed
+    /// attestation contract exists.
     /// </summary>
     private static string? FindHelperScript()
     {
-        if (_helperPathScanned)
-            return _cachedHelperPath;
-        _helperPathScanned = true;
-
-        // NixOS: module puts gpu-block-helper.sh on PATH
-        var nixPath = Platform.Linux.NixOS.ResolveGpuBlockHelper();
-        if (nixPath != null)
-        {
-            _cachedHelperPath = nixPath;
-            Logger.WriteLine($"GPUModeControl: GPU block helper found at {nixPath} (NixOS)");
-            return nixPath;
-        }
-
-        foreach (var path in HelperSearchPaths)
-        {
-            if (File.Exists(path))
-            {
-                _cachedHelperPath = path;
-                Logger.WriteLine($"GPUModeControl: GPU block helper found at {path}");
-                return path;
-            }
-        }
-
-        Logger.WriteLine("GPUModeControl: GPU block helper not found - will use pkexec fallback");
+        Logger.WriteLine("GPUModeControl: external GPU block helper refused; package attestation unavailable");
         return null;
     }
 
@@ -3240,6 +3199,11 @@ public class GPUModeControl
         if (backend != "pci" && backend != "asus-wmi")
         {
             Logger.WriteLine($"GPUModeControl: PushBackendMarker rejected invalid backend '{backend}'");
+            return;
+        }
+        if (!IsTestMode && !SysfsHelper.PrivilegedOperationsAvailable)
+        {
+            Logger.WriteLine("GPUModeControl: backend marker write refused; package attestation unavailable");
             return;
         }
 
@@ -3307,6 +3271,8 @@ public class GPUModeControl
     /// </summary>
     private GpuSwitchResult TryLiveRemovePciBlocks()
     {
+        if (!IsTestMode && !SysfsHelper.PrivilegedOperationsAvailable)
+            return GpuSwitchResult.Failed;
         try
         {
             if (IsTestMode)
@@ -3444,6 +3410,11 @@ public class GPUModeControl
     /// </summary>
     private void WriteDriverBlock(GpuMode target)
     {
+        if (!IsTestMode && !SysfsHelper.PrivilegedOperationsAvailable)
+        {
+            Logger.WriteLine("GPUModeControl: driver block write refused; package attestation unavailable");
+            return;
+        }
         try
         {
             bool isPci = AppConfig.IsPciGpuBackend();
@@ -3568,6 +3539,11 @@ public class GPUModeControl
     /// </summary>
     private void RemoveDriverBlock()
     {
+        if (!IsTestMode && !SysfsHelper.PrivilegedOperationsAvailable)
+        {
+            Logger.WriteLine("GPUModeControl: driver block removal refused; package attestation unavailable");
+            return;
+        }
         try
         {
             if (!DriverBlockExists())
@@ -3592,8 +3568,8 @@ public class GPUModeControl
             }
             else
             {
-                SysfsHelper.RunCommandWithTimeout("pkexec",
-                    $"rm -f {ModprobeBlockPath} {UdevRemovePath} {TriggerPath}", 120000);
+                Logger.WriteLine(
+                    "GPUModeControl: block removal refused; package attestation unavailable");
             }
         }
         catch (Exception ex)
@@ -3608,8 +3584,13 @@ public class GPUModeControl
     /// trigger is consumed. When false, the marker is removed and boot
     /// behaviour returns to one-shot.
     /// </summary>
-    private void SyncPersistentMarkerToDisk(bool present)
+    private bool SyncPersistentMarkerToDisk(bool present)
     {
+        if (!IsTestMode && !SysfsHelper.PrivilegedOperationsAvailable)
+        {
+            Logger.WriteLine("GPUModeControl: persistent marker change refused; package attestation unavailable");
+            return false;
+        }
         try
         {
             string action = present ? "persist" : "unpersist";
@@ -3618,7 +3599,7 @@ public class GPUModeControl
             if (IsTestMode)
             {
                 RunHelperInTestMode(action, GpuMode.Eco);
-                return;
+                return true;
             }
 
             string? helper = FindHelperScript();
@@ -3636,16 +3617,19 @@ public class GPUModeControl
                     : $"rm -f {PersistentTriggerPath}";
                 SysfsHelper.RunPkexecBash(script);
             }
+            return false;
         }
         catch (Exception ex)
         {
             Logger.WriteLine($"GPUModeControl: SyncPersistentMarkerToDisk({present}) failed: {ex.Message}");
+            return false;
         }
     }
 
     internal void SetEcoPersistent(bool persistent)
     {
-        SyncPersistentMarkerToDisk(persistent);
+        if (!SyncPersistentMarkerToDisk(persistent))
+            return;
         AppConfig.Set("gpu_eco_persistent", persistent ? 1 : 0);
 
         if (persistent)

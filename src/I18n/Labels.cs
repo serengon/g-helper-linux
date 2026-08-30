@@ -145,6 +145,21 @@ public static class Labels
     }
 
     /// <summary>
+    /// Resolve one label from the process locale without loading or persisting
+    /// application preferences. Used by fail-closed early CLI dispatch.
+    /// </summary>
+    public static string GetForCurrentCultureWithoutInitialization(string key)
+    {
+        string code = DetectLocale();
+        if (LanguageLoaders.TryGetValue(code, out var loader)
+            && loader().TryGetValue(key, out string? localized))
+            return localized;
+        if (Languages.English.Translations.TryGetValue(key, out string? english))
+            return english;
+        return key;
+    }
+
+    /// <summary>
     /// Get a translated format string and apply arguments.
     /// Example: Labels.Format("cpu_fan_info", "65\u00b0C", "2100RPM")
     /// </summary>
